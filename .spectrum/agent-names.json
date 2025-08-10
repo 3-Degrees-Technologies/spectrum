@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "description": "Default agent configuration - professional neutral names",
+  "agent_names": {
+    "red": {
+      "display_name": "Agent-Red",
+      "role": "Senior Developer",
+      "description": "Primary development agent focusing on implementation and technical solutions",
+      "workspace_dir": "./red",
+      "emoji": "🔴"
+    },
+    "blue": {
+      "display_name": "Agent-Blue", 
+      "role": "Senior Developer",
+      "description": "Secondary development agent for code review and complex implementations",
+      "workspace_dir": "./blue",
+      "emoji": "🔵"
+    },
+    "green": {
+      "display_name": "Agent-Green",
+      "role": "Product Owner",
+      "description": "Product management agent handling requirements and project coordination", 
+      "workspace_dir": ".",
+      "emoji": "🟢"
+    },
+    "black": {
+      "display_name": "Agent-Black",
+      "role": "DevOps Engineer", 
+      "description": "Infrastructure and deployment agent managing CI/CD and system operations",
+      "workspace_dir": "./blue",
+      "emoji": "⚫"
+    }
+  }
+}

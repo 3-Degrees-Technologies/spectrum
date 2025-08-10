@@ -1,0 +1,36 @@
+{
+  "display_information": {
+    "name": "Agent Green Bot",
+    "description": "Product Owner - AI Agent for Linear integration, product management, and team coordination",
+    "background_color": "#27ae60"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Lieutenant Green",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "channels:read",
+        "channels:history",
+        "reactions:write",
+        "users:read",
+        "reactions:read",
+        "files:read",
+        "files:write"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

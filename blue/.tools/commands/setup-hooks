@@ -1,0 +1,169 @@
+#!/bin/bash
+# setup-hooks command for Spectrum Development Framework
+# Installs pre-commit hooks for automatic quality enforcement
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+HOOK="🪝"
+
+echo -e "${HOOK} ${BLUE}Spectrum Development Framework - Git Hooks Setup${NC}"
+echo ""
+
+# Check if we're in a git repository
+if [[ ! -d ".git" ]]; then
+    echo -e "${ERROR} Not a git repository"
+    echo -e "${INFO} Please run this command from the root of a git repository"
+    exit 1
+fi
+
+# Check if .NET project exists
+if [[ ! -f "*.sln" ]] && [[ ! -f "*.csproj" ]] && [[ ! -d "src" ]]; then
+    echo -e "${YELLOW} Warning: No .NET project files found"
+    echo -e "${INFO} Pre-commit hook assumes .NET project structure"
+fi
+
+echo -e "${WORKING} Installing Centro pre-commit hook..."
+
+# Create hooks directory if it doesn't exist
+mkdir -p .git/hooks
+
+# Copy pre-commit hook
+cp ~/.spectrum-dev/hooks/pre-commit .git/hooks/pre-commit 2>/dev/null || {
+    # If not found in spectrum-dev, create it
+    cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/bash
+# Pre-commit hook for Spectrum Development Framework
+# Automatically enforces quality gates from AI-DEVELOPMENT-GUIDE before any commit
+
+# Colors and emoji for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+SECURITY="🔒"
+BUILD="🔨"
+TEST="🧪"
+STYLE="💅"
+
+echo -e "${INFO} ${BLUE}Centro Pre-Commit Quality Gates${NC}"
+echo ""
+
+# Quality Gate 1: Security (ZERO TOLERANCE)
+echo -e "${SECURITY} ${WORKING} Quality Gate 1: Security Validation"
+security_warnings=$(dotnet build --no-restore 2>&1 | grep -E "CA3[0-9]{3}|S2068|S4423")
+
+if [[ -n "$security_warnings" ]]; then
+    echo -e "${ERROR} ${RED}COMMIT BLOCKED: Security warnings found${NC}"
+    echo ""
+    echo -e "${YELLOW}Security issues detected:${NC}"
+    echo "$security_warnings"
+    echo ""
+    echo -e "${INFO} Security warnings are not allowed in Centro (financial system)"
+    echo -e "${INFO} Please fix these issues before committing:"
+    echo "  - CA3xxx: Security vulnerabilities (SQL injection, XSS, etc.)"
+    echo "  - S2068: Hardcoded credentials/passwords/API keys"
+    echo "  - S4423: Weak SSL/TLS protocols"
+    echo ""
+    exit 1
+fi
+echo -e "${SUCCESS} Security validation passed"
+
+# Quality Gate 2: Build Success (BLOCKING)
+echo -e "\n${BUILD} ${WORKING} Quality Gate 2: Build Validation"
+build_output=$(dotnet build --verbosity quiet 2>&1)
+build_exit_code=$?
+
+if [[ $build_exit_code -ne 0 ]]; then
+    echo -e "${ERROR} ${RED}COMMIT BLOCKED: Build failed${NC}"
+    echo ""
+    echo -e "${YELLOW}Build errors:${NC}"
+    echo "$build_output"
+    echo ""
+    echo -e "${INFO} Fix build errors before committing"
+    exit 1
+fi
+echo -e "${SUCCESS} Build validation passed"
+
+# Quality Gate 3: Tests (BLOCKING)
+echo -e "\n${TEST} ${WORKING} Quality Gate 3: Test Validation"
+test_output=$(dotnet test --no-build --verbosity quiet 2>&1)
+test_exit_code=$?
+
+if [[ $test_exit_code -ne 0 ]]; then
+    echo -e "${ERROR} ${RED}COMMIT BLOCKED: Tests failed${NC}"
+    echo ""
+    echo -e "${YELLOW}Test failures:${NC}"
+    echo "$test_output" | grep -A 5 -B 5 "Failed"
+    echo ""
+    echo -e "${INFO} All tests must pass before committing"
+    echo -e "${INFO} If you're in TDD cycle, ensure your new test passes"
+    exit 1
+fi
+echo -e "${SUCCESS} Test validation passed"
+
+# Quality Gate 4: Code Style (AUTO-FIX)
+echo -e "\n${STYLE} ${WORKING} Quality Gate 4: Style Validation"
+format_output=$(dotnet format whitespace --verify-no-changes 2>&1)
+format_exit_code=$?
+
+if [[ $format_exit_code -ne 0 ]]; then
+    echo -e "${YELLOW} Style issues found - auto-fixing..."
+    dotnet format whitespace --include $(git diff --cached --name-only --diff-filter=ACM | grep '\.cs$' | tr '\n' ' ') 2>/dev/null
+    
+    # Re-stage the formatted files
+    git diff --cached --name-only --diff-filter=ACM | grep '\.cs$' | xargs git add 2>/dev/null || true
+    
+    echo -e "${SUCCESS} Code automatically formatted and re-staged"
+else
+    echo -e "${SUCCESS} Style validation passed"
+fi
+
+# Quality Summary
+echo -e "\n${SUCCESS} ${GREEN}ALL QUALITY GATES PASSED${NC}"
+
+# Show warning counts for awareness (but don't block)
+warning_count=$(dotnet build --no-restore 2>&1 | grep -c "warning" || echo "0")
+if [[ $warning_count -gt 0 ]]; then
+    echo -e "${INFO} ${YELLOW}Note: $warning_count non-blocking warnings found${NC}"
+    echo -e "${INFO} Consider addressing these in future refactoring"
+fi
+
+echo -e "${SUCCESS} Commit proceeding..."
+echo ""
+
+exit 0
+EOF
+}
+
+# Make hook executable
+chmod +x .git/hooks/pre-commit
+
+echo -e "${SUCCESS} Pre-commit hook installed successfully!"
+echo ""
+echo -e "${INFO} ${YELLOW}What the pre-commit hook does:${NC}"
+echo "  🔒 Blocks commits with security warnings (CA3xxx, S2068, S4423)"
+echo "  🔨 Blocks commits with build failures"
+echo "  🧪 Blocks commits with test failures"
+echo "  💅 Auto-fixes code style issues and re-stages files"
+echo ""
+echo -e "${INFO} ${GREEN}Benefits for AI Agents:${NC}"
+echo "  ✅ Impossible to commit code with security issues"
+echo "  ✅ Impossible to commit broken builds or tests"
+echo "  ✅ Automatic code formatting - no manual intervention needed"
+echo "  ✅ Enforces quality standards from AI-DEVELOPMENT-GUIDE"
+echo ""
+echo -e "${YELLOW} Note: Hook runs automatically on every 'git commit'${NC}"
+echo -e "${INFO} To bypass hook (emergency only): git commit --no-verify"

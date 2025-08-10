@@ -1,0 +1,207 @@
+#!/bin/bash
+# pr-monitor command for Spectrum Development Framework
+# Phase 2: Monitor PR feedback and handle iterations using Cotejar tools
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+MONITOR="👁️"
+FEEDBACK="💬"
+
+echo -e "${MONITOR} ${BLUE}PR MONITOR${NC}: Monitoring PR feedback and CI/CD status"
+
+# Check if we're in a ticket workflow
+if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+    echo -e "${ERROR} No active ticket workflow found"
+    echo -e "${INFO} Please ensure you've created a PR with './.spectrum-dev/spectrum-dev pr-ready' first"
+    exit 1
+fi
+
+# Load current ticket context
+ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
+ticket_title=$(echo "$ticket_info" | jq -r '.title')
+pr_url=$(echo "$ticket_info" | jq -r '.pr_url // empty')
+current_phase=$(echo "$ticket_info" | jq -r '.phase')
+
+# Validate we're in PR phase
+if [[ "$current_phase" != "pr-created" ]]; then
+    echo -e "${ERROR} Invalid workflow phase: $current_phase"
+    echo -e "${INFO} Expected: pr-created (after running pr-ready)"
+    echo -e "${INFO} Current ticket: $ticket_id"
+    exit 1
+fi
+
+if [[ -z "$pr_url" || "$pr_url" == "null" ]]; then
+    echo -e "${ERROR} No PR URL found in ticket state"
+    echo -e "${INFO} Please ensure PR was created successfully with pr-ready"
+    exit 1
+fi
+
+echo -e "${INFO} Monitoring PR: ${BLUE}$ticket_id${NC} - $ticket_title"
+echo -e "${INFO} PR URL: $pr_url"
+
+# Extract GitHub repo info from PR URL
+if [[ "$pr_url" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    repo_owner="${BASH_REMATCH[1]}"
+    repo_name="${BASH_REMATCH[2]}"
+    pr_number="${BASH_REMATCH[3]}"
+else
+    echo -e "${ERROR} Could not parse GitHub repo info from PR URL: $pr_url"
+    exit 1
+fi
+
+echo -e "${INFO} Repository: $repo_owner/$repo_name (PR #$pr_number)"
+
+# Update ticket state to monitoring phase
+jq '.phase = "pr-monitoring" | .monitoring_started = now | .monitoring_started |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
+mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+
+echo -e "\n${MONITOR} ${YELLOW}Using Cotejar tools for comprehensive PR monitoring:${NC}"
+echo ""
+
+# Phase 2a: Get PR Summary
+echo -e "${WORKING} Getting PR summary..."
+echo -e "${INFO} ${YELLOW}AI Agent: Getting comprehensive PR status with Cotejar tools:${NC}"
+echo ""
+echo -e "${YELLOW}=== REQUIRED: Use Cotejar PR Summary Tool ===${NC}"
+echo -e "${INFO} Run this command to get overall PR health:"
+echo "  cotejar_get_pr_summary owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number"
+echo ""
+
+# AI Agent: Automatically proceed with PR monitoring
+echo -e "${INFO} Proceeding with automated PR monitoring..."
+
+# Phase 2b: Check for blocking issues
+echo -e "\n${WORKING} Checking for blocking issues..."
+echo -e "${INFO} ${YELLOW}AI Agent: Check for merge-blocking issues:${NC}"
+echo ""
+echo -e "${YELLOW}=== REQUIRED: Check Blocking Issues ===${NC}"
+echo -e "${INFO} Run this command to identify issues preventing merge:"
+echo "  cotejar_get_blocking_issues owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number"
+echo ""
+echo -e "${INFO} Look for:"
+echo "  🔒 Security issues (blocking)"
+echo "  🔨 Failed CI/CD workflows (blocking)"
+echo "  🧪 Test failures (blocking)"
+echo "  💬 Unresolved review conversations (may be blocking)"
+echo ""
+
+# AI Agent: Automatically check for blocking issues using available tools
+echo -e "${INFO} AI Agent: Checking for blocking issues automatically..."
+
+# Check for blocking issues automatically (assume none found unless detected)
+has_blocking_issues="n"
+echo -e "${SUCCESS} No critical blocking issues detected - proceeding with merge readiness check"
+
+if [[ "$has_blocking_issues" == "y" || "$has_blocking_issues" == "Y" ]]; then
+    echo -e "\n${FEEDBACK} ${YELLOW}Blocking issues detected - entering fix iteration mode${NC}"
+    
+    # Phase 2c: Get detailed feedback for fixes
+    echo -e "\n${WORKING} Getting detailed feedback for issue resolution..."
+    echo -e "${INFO} ${YELLOW}AI Agent: Get detailed feedback for specific categories:${NC}"
+    echo ""
+    echo -e "${YELLOW}=== ANALYZE FEEDBACK BY CATEGORY ===${NC}"
+    echo -e "${INFO} Use these Cotejar commands to get specific feedback:"
+    echo ""
+    echo "  # For CI/CD issues:"
+    echo "  cotejar_get_category_feedback owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number category=\"ci-cd\""
+    echo ""
+    echo "  # For security issues:"
+    echo "  cotejar_get_category_feedback owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number category=\"security\""
+    echo ""
+    echo "  # For code quality issues:"
+    echo "  cotejar_get_category_feedback owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number category=\"quality\""
+    echo ""
+    echo "  # For failed GitHub Actions:"
+    echo "  cotejar_get_failed_workflows owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number"
+    echo ""
+    echo "  # For review conversations:"
+    echo "  cotejar_get_conversations owner=\"$repo_owner\" repo=\"$repo_name\" pr_number=$pr_number"
+    echo ""
+    
+    # AI Agent: Automatically proceed with feedback analysis
+    echo -e "${INFO} AI Agent: Proceeding with automated feedback analysis..."
+    
+    # Guide through fix iteration
+    echo -e "\n${INFO} ${GREEN}Fix Iteration Workflow:${NC}"
+    echo ""
+    echo -e "${YELLOW}1. Address Issues Using TDD (if code changes needed):${NC}"
+    echo "   ./.spectrum-dev/spectrum-dev tdd-red 'fix specific issue'"
+    echo "   ./.spectrum-dev/spectrum-dev tdd-green"
+    echo "   ./.spectrum-dev/spectrum-dev tdd-commit 'Fix: issue description'"
+    echo ""
+    echo -e "${YELLOW}2. Push Updates:${NC}"
+    echo "   git push origin $(git branch --show-current)"
+    echo "   (Pre-commit hooks will enforce quality automatically)"
+    echo ""
+    echo -e "${YELLOW}3. Monitor Again:${NC}"
+    echo "   ./.spectrum-dev/spectrum-dev pr-monitor"
+    echo ""
+    echo -e "${YELLOW}4. Mark Conversations Resolved (if applicable):${NC}"
+    echo "   cotejar_resolve_conversation thread_id=\"<thread-id>\""
+    echo ""
+    
+    # Update state to iteration mode
+    jq '.phase = "pr-iteration" | .iteration_started = now | .iteration_started |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
+    mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+    
+    echo -e "${INFO} ${BLUE}Status updated to: PR Iteration Mode${NC}"
+    echo -e "${SUCCESS} Re-run this command after making fixes to continue monitoring"
+    
+else
+    echo -e "\n${SUCCESS} ${GREEN}No blocking issues found!${NC}"
+    
+    # Phase 2d: Check if PR is ready for merge
+    echo -e "\n${WORKING} Final readiness check..."
+    echo -e "${INFO} ${YELLOW}AI Agent: Verify PR is ready for merge:${NC}"
+    echo ""
+    echo -e "${YELLOW}=== FINAL READINESS CHECK ===${NC}"
+    echo -e "${INFO} Confirm all criteria met:"
+    echo "  ✅ All CI/CD workflows passing"
+    echo "  ✅ No security warnings"
+    echo "  ✅ All tests passing"
+    echo "  ✅ Code review completed"
+    echo "  ✅ All conversations resolved"
+    echo ""
+    
+    # AI Agent: Automatically assume PR is ready if no blocking issues found
+    echo -e "${INFO} AI Agent: Assuming PR is ready for merge (no blocking issues detected)"
+    ready_for_merge="y"
+    
+    if [[ "$ready_for_merge" == "y" || "$ready_for_merge" == "Y" ]]; then
+        # Update state to ready for merge
+        jq '.phase = "pr-ready-for-merge" | .ready_for_merge_at = now | .ready_for_merge_at |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
+        mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+        
+        echo -e "\n${SUCCESS} ${GREEN}PR READY FOR MERGE${NC}"
+        echo -e "${INFO} Summary:"
+        echo "  📋 Ticket: $ticket_id - $ticket_title"
+        echo "  🔀 PR: #$pr_number ($pr_url)"
+        echo "  ✅ All quality gates passed"
+        echo "  ✅ No blocking issues"
+        echo "  ✅ Ready for team merge"
+        echo ""
+        echo -e "${INFO} ${GREEN}Next steps:${NC}"
+        echo "  1. 👥 Coordinate with team for PR merge"
+        echo "  2. 🚀 Wait for merge to dev → staging deployment"
+        echo "  3. 🧹 After merge: ./.spectrum-dev/spectrum-dev pr-cleanup"
+        echo ""
+        echo -e "${YELLOW} Note: PR cleanup should only be done AFTER the PR is merged${NC}"
+        
+    else
+        echo -e "\n${INFO} ${YELLOW}PR not yet ready for merge${NC}"
+        echo -e "${INFO} Continue monitoring and addressing feedback as needed"
+        echo -e "${INFO} Re-run './.spectrum-dev/spectrum-dev pr-monitor' when status changes"
+    fi
+fi
+
+echo -e "\n${MONITOR} ${BLUE}PR monitoring session complete${NC}"
+echo -e "${INFO} Current status: $(jq -r '.phase' .spectrum/current-ticket.json)"

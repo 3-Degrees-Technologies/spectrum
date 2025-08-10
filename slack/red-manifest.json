@@ -1,0 +1,36 @@
+{
+  "display_information": {
+    "name": "Agent Red Bot",
+    "description": "Developer - AI Agent for software development",
+    "background_color": "#e74c3c"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Agent Red",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "channels:read",
+        "channels:history",
+        "reactions:write",
+        "users:read",
+        "reactions:read",
+        "files:read",
+        "files:write"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

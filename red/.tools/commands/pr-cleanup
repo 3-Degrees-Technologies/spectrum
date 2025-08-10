@@ -1,0 +1,213 @@
+#!/bin/bash
+# pr-cleanup command for Spectrum Development Framework
+# Phase 3: Post-merge cleanup - archive documentation and reset for next ticket
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+CLEANUP="🧹"
+ARCHIVE="📚"
+
+echo -e "${CLEANUP} ${BLUE}PR CLEANUP${NC}: Post-merge cleanup and ticket archival"
+
+# Check if we're in a ticket workflow
+if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+    echo -e "${ERROR} No active ticket workflow found"
+    echo -e "${INFO} Please ensure you have an active PR workflow"
+    exit 1
+fi
+
+# Load current ticket context
+ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
+ticket_title=$(echo "$ticket_info" | jq -r '.title')
+domain=$(echo "$ticket_info" | jq -r '.domain')
+branch=$(echo "$ticket_info" | jq -r '.branch')
+pr_url=$(echo "$ticket_info" | jq -r '.pr_url // empty')
+current_phase=$(echo "$ticket_info" | jq -r '.phase')
+
+echo -e "${INFO} Cleaning up after PR merge: ${BLUE}$ticket_id${NC} - $ticket_title"
+echo -e "${INFO} Domain: $domain"
+echo -e "${INFO} Branch: $branch"
+echo -e "${INFO} Current phase: $current_phase"
+
+# Safety check - confirm PR is merged
+echo -e "\n${WORKING} ${YELLOW}Verifying PR merge status...${NC}"
+echo -e "${ERROR} ${RED}IMPORTANT: Only run this command AFTER the PR has been merged!${NC}"
+echo ""
+echo -e "${INFO} This command will:"
+echo "  🗑️  Delete the local feature branch"
+echo "  📚 Archive ticket documentation"
+echo "  🧹 Clean up all workflow state"
+echo "  🔄 Reset for next assignment"
+echo ""
+
+# AI Agent: Proceed with cleanup automatically
+# This tool assumes PR has been merged when called
+echo -e "${INFO} Proceeding with post-merge cleanup..."
+
+# Check current branch
+current_git_branch=$(git branch --show-current)
+if [[ "$current_git_branch" == "$branch" ]]; then
+    echo -e "\n${WORKING} Switching away from feature branch..."
+    git checkout dev || {
+        echo -e "${ERROR} Failed to switch to dev branch"
+        echo -e "${INFO} Please ensure dev branch exists and is accessible"
+        exit 1
+    }
+    echo -e "${SUCCESS} Switched to dev branch"
+fi
+
+# Pull latest changes to dev
+echo -e "\n${WORKING} Updating dev branch with merged changes..."
+git pull origin dev || {
+    echo -e "${ERROR} Failed to pull latest dev branch"
+    echo -e "${INFO} Please check network connection and repository access"
+    exit 1
+}
+echo -e "${SUCCESS} Dev branch updated"
+
+# Delete the feature branch
+echo -e "\n${WORKING} Deleting local feature branch..."
+git branch -d "$branch" || {
+    echo -e "${YELLOW} Warning: Could not delete branch $branch (may have unmerged changes)"
+    echo -e "${INFO} Force deleting branch to complete cleanup..."
+    
+    git branch -D "$branch" || {
+        echo -e "${ERROR} Failed to force delete branch"
+        exit 1
+    }
+    echo -e "${SUCCESS} Feature branch force deleted"
+}
+    fi
+}
+echo -e "${SUCCESS} Local feature branch deleted"
+
+# Archive ticket documentation
+echo -e "\n${ARCHIVE} ${WORKING} Archiving ticket documentation..."
+
+domain_folder=$(echo "$ticket_info" | jq -r '.domain_folder')
+ticket_doc_path=$(echo "$ticket_info" | jq -r '.ticket_doc_path')
+
+if [[ -f "$ticket_doc_path" ]]; then
+    # Create tickets subfolder if it doesn't exist
+    mkdir -p "$domain_folder/tickets"
+    
+    # Clean filename for historical storage
+    clean_title=$(echo "$ticket_title" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-zA-Z0-9-]//g')
+    historical_path="$domain_folder/tickets/$ticket_id-$clean_title.md"
+    
+    echo -e "${WORKING} Creating historical documentation..."
+    
+    # Create historical version with temporal state removed
+    # This preserves design decisions and requirements without status/dates
+    cat "$ticket_doc_path" | sed -E '
+        /^## Status:/,/^## / { /^## Status:/d; /^- \[x\]/d; /^- \[ \]/d; /^Status:/d; /^Assignee:/d; /^Started:/d; /^Updated:/d; }
+        /^- \[x\] /d
+        /^- \[ \] /d
+        /^✅/d
+        /^⏳/d
+        /^📅/d
+        /^\*\*Status:/d
+        /^\*\*Assignee:/d
+        /^\*\*Created:/d
+        /^\*\*Updated:/d
+        /^Last updated:/d
+    ' > "$historical_path"
+    
+    # Add completion metadata to historical version
+    tdd_cycles=$(ls -1 .spectrum/tdd/history/ 2>/dev/null | wc -l || echo "0")
+    files_changed=$(echo "$ticket_info" | jq -r '.files_changed // "unknown"')
+    test_count=$(echo "$ticket_info" | jq -r '.test_count // "unknown"')
+    
+    cat >> "$historical_path" << EOF
+
+---
+## Implementation Completed
+- **Ticket**: $ticket_id
+- **PR**: $pr_url
+- **Domain**: $domain
+- **TDD Cycles**: $tdd_cycles completed
+- **Tests**: $test_count passing
+- **Files Changed**: $files_changed
+- **Merged**: $(date -Iseconds)
+- **Branch**: $branch (deleted)
+
+This ticket has been completed and deployed through the Centro development workflow.
+The implementation has been merged to dev branch and deployed to staging environment.
+EOF
+    
+    echo -e "${SUCCESS} Ticket documentation archived to: $historical_path"
+    
+    # Remove the active ticket documentation from main domain folder
+    echo -e "${WORKING} Removing active ticket file: $ticket_doc_path"
+    rm -f "$ticket_doc_path"
+    echo -e "${SUCCESS} Active ticket documentation cleaned up"
+else
+    echo -e "${YELLOW} Warning: Ticket documentation file not found: $ticket_doc_path"
+fi
+
+# Archive TDD state
+echo -e "\n${WORKING} Archiving TDD workflow state..."
+if [[ -d ".spectrum/tdd" ]]; then
+    # Archive TDD history to ticket-specific folder
+    tdd_archive_dir="$domain_folder/tickets/$ticket_id-tdd-history"
+    mkdir -p "$tdd_archive_dir"
+    
+    if [[ -d ".spectrum/tdd/history" ]]; then
+        cp -r .spectrum/tdd/history/* "$tdd_archive_dir/" 2>/dev/null || true
+        echo -e "${SUCCESS} TDD cycle history archived to: $tdd_archive_dir"
+    fi
+    
+    # Remove all TDD state
+    rm -rf .spectrum/tdd
+    echo -e "${SUCCESS} TDD workflow state cleaned up"
+fi
+
+# Finalize and archive ticket state
+echo -e "\n${WORKING} Finalizing ticket state..."
+jq '.phase = "completed" | .completed_at = now | .completed_at |= todate | .archived_to = $archived | .branch_deleted = true | .cleanup_completed = true' \
+   --arg archived "$historical_path" \
+   .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
+mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+
+# Archive the final ticket state
+mkdir -p .spectrum/completed-tickets
+ticket_state_archive=".spectrum/completed-tickets/$ticket_id-$(date +%Y%m%d-%H%M%S).json"
+cp .spectrum/current-ticket.json "$ticket_state_archive"
+echo -e "${SUCCESS} Final ticket state archived to: $ticket_state_archive"
+
+# Clean up current ticket state - ready for next assignment
+rm -f .spectrum/current-ticket.json
+echo -e "${SUCCESS} Current ticket state cleaned up"
+
+# Clean up any remaining workflow files
+if [[ -f ".spectrum/current-cycle.json" ]]; then
+    rm -f .spectrum/current-cycle.json
+fi
+
+echo -e "\n${SUCCESS} ${GREEN}PR CLEANUP COMPLETED SUCCESSFULLY${NC}"
+echo -e "${INFO} Summary:"
+echo "  📋 Ticket: $ticket_id - $ticket_title"
+echo "  🔀 PR: $pr_url (merged)"
+echo "  🗑️  Branch: $branch (deleted)"
+echo "  📚 Documentation: Archived to $domain_folder/tickets/"
+echo "  🔄 TDD History: Preserved in ticket archive"
+echo "  🧹 Workflow State: Completely cleaned"
+echo ""
+echo -e "${INFO} ${GREEN}Post-Cleanup Status:${NC}"
+echo "  📁 Domain folder: Clean, only implementation files remain"
+echo "  📚 Historical archive: Complete ticket record preserved"
+echo "  🔄 Workflow state: Reset for next assignment"
+echo "  🌳 Git state: On dev branch with latest changes"
+echo ""
+echo -e "${SUCCESS} ${GREEN}READY FOR NEXT TICKET ASSIGNMENT!${NC}"
+echo -e "${INFO} Agent-Knowledge can now assign new tickets"
+echo -e "${INFO} Run './.spectrum-dev/spectrum-dev start-ticket' when new assignment received"

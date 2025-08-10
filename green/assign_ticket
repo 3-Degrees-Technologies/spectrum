@@ -1,0 +1,163 @@
+#!/bin/bash
+# assign_ticket command for Agent-Knowledge
+# Automates: Dependency check -> Status update -> Slack notification -> Assignment confirmation
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+CHECK="🔍"
+SLACK="💬"
+ASSIGN="👤"
+
+# Helper function to get project prefix
+get_project_prefix() {
+    local config_file=".spectrum/linear_config.json"
+    if [ -f "$config_file" ]; then
+        python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
+    else
+        # Get from saber and create config if missing
+        python3 .tools/saber.py config >/dev/null 2>&1
+        if [ -f "$config_file" ]; then
+            python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
+        else
+            echo "SPE"  # fallback
+        fi
+    fi
+}
+
+# Usage check
+if [ $# -ne 2 ]; then
+    echo -e "${ERROR} Usage: ./assign_ticket <TICKET_ID> <AGENT_NAME>"
+    echo -e "${INFO} Example: ./assign_ticket SPE-10 Agent-Sam"
+    exit 1
+fi
+
+TICKET_ID="$1"
+AGENT_NAME="$2"
+
+echo -e "${INFO} ${BLUE}Agent-Knowledge Assignment Framework${NC}"
+echo -e "${ASSIGN} Assigning ${TICKET_ID} to ${AGENT_NAME}"
+echo ""
+
+# Step 1: Validate ticket exists and get details
+echo -e "${CHECK} Step 1: Validating ticket and checking dependencies..."
+echo -e "${WORKING} Getting ticket details..."
+
+# Get ticket details
+ticket_details=$(python3 .tools/saber.py get "$TICKET_ID" 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo -e "${ERROR} Failed to find ticket ${TICKET_ID}"
+    exit 1
+fi
+
+# Extract key information
+ticket_title=$(echo "$ticket_details" | jq -r '.title // "Unknown"')
+ticket_status=$(echo "$ticket_details" | jq -r '.state.name // "Unknown"')
+parent_id=$(echo "$ticket_details" | jq -r '.parent.identifier // null')
+
+echo -e "${SUCCESS} Found: ${ticket_title}"
+echo -e "${INFO} Current status: ${ticket_status}"
+
+# Step 2: Check dependencies
+echo -e "${CHECK} Step 2: Checking dependencies..."
+
+# Get project prefix for dependency detection
+project_prefix=$(get_project_prefix)
+
+# Get dependencies from ticket description using dynamic prefix
+dependencies=$(echo "$ticket_details" | jq -r '.description' | grep -A 10 "Dependencies" | grep -o "${project_prefix}-[0-9]\+" | head -5)
+
+if [ -n "$dependencies" ]; then
+    echo -e "${INFO} Checking dependency tickets..."
+    all_deps_complete=true
+    
+    for dep in $dependencies; do
+        if [ "$dep" != "$TICKET_ID" ]; then
+            dep_status=$(python3 .tools/saber.py get "$dep" 2>/dev/null | jq -r '.state.name // "Unknown"')
+            if [ "$dep_status" = "Done" ]; then
+                echo -e "${SUCCESS} ${dep}: ${dep_status}"
+            else
+                echo -e "${ERROR} ${dep}: ${dep_status} (NOT COMPLETE)"
+                all_deps_complete=false
+            fi
+        fi
+    done
+    
+    if [ "$all_deps_complete" != true ]; then
+        echo -e "${ERROR} Cannot assign - dependencies not complete"
+        exit 1
+    fi
+else
+    echo -e "${INFO} No dependencies found or dependencies section not present"
+fi
+
+# Step 3: Update ticket status to In Progress
+echo -e "${WORKING} Step 3: Updating ticket status..."
+
+if [ "$ticket_status" != "In Progress" ]; then
+    status_result=$(python3 .tools/saber.py status "$TICKET_ID" "In Progress" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        echo -e "${SUCCESS} Status updated to In Progress"
+    else
+        echo -e "${ERROR} Failed to update status"
+        exit 1
+    fi
+else
+    echo -e "${INFO} Already In Progress"
+fi
+
+# Step 4: Create ticket attachment and send notification
+echo -e "${SLACK} Step 4: Creating ticket attachment and sending notification..."
+
+# Create ticket filename with proper format
+ticket_title_clean=$(echo "$ticket_title" | sed 's/[^a-zA-Z0-9 ]//g' | sed 's/ /_/g')
+ticket_filename="${TICKET_ID}_${ticket_title_clean}.md"
+ticket_filepath="/tmp/${ticket_filename}"
+
+# Extract and save full ticket description
+echo -e "${WORKING} Creating ticket attachment: ${ticket_filename}"
+echo "$ticket_details" | jq -r '.description' > "$ticket_filepath"
+
+if [ ! -f "$ticket_filepath" ]; then
+    echo -e "${ERROR} Failed to create ticket attachment"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Ticket attachment created: ${ticket_filepath}"
+
+# Create assignment message addressed to agent
+assignment_msg="@${AGENT_NAME}: 🎯 **New Assignment: ${TICKET_ID}**
+
+You have been assigned: **${ticket_title}**
+
+Ticket is now **In Progress** and ready for work. Full details attached."
+
+# Note: Agent-Knowledge must send both message and attachment
+echo -e "${INFO} ${YELLOW}Agent-Knowledge must send Slack notification with attachment:${NC}"
+echo ""
+echo -e "${BLUE}=== MESSAGE TO SEND ===${NC}"
+echo "$assignment_msg"
+echo -e "${BLUE}=========================${NC}"
+echo ""
+echo -e "${BLUE}=== ATTACHMENT TO UPLOAD ===${NC}"
+echo -e "${INFO} File: ${ticket_filepath}"
+echo -e "${INFO} Use: python3 .tools/slack_rest_client.py upload_file ${ticket_filepath} \"${TICKET_ID} ticket details\""
+echo -e "${BLUE}===========================${NC}"
+
+# Step 5: Assignment confirmation
+echo ""
+echo -e "${SUCCESS} ${GREEN}Assignment Complete!${NC}"
+echo -e "${INFO} Ticket: ${TICKET_ID}"
+echo -e "${INFO} Assignee: ${AGENT_NAME}"  
+echo -e "${INFO} Status: In Progress"
+echo -e "${INFO} Dependencies: Verified"
+echo -e "${INFO} Attachment: Created"
+echo ""
+echo -e "${BLUE}Send both message and attachment to complete assignment!${NC}"

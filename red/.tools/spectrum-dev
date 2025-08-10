@@ -1,0 +1,79 @@
+#!/bin/bash
+# Spectrum Development Framework
+# Executable process framework for Spectrum AI developers
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SPECTRUM_DEV_DIR="$SCRIPT_DIR"
+COMMANDS_DIR="$SPECTRUM_DEV_DIR/commands"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Emoji for better readability
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+
+case "$1" in
+    "help"|"--help"|"")
+        echo -e "${BLUE}Spectrum Development Framework${NC}"
+        echo ""
+        echo "Available commands:"
+        echo ""
+        echo "🎫 Ticket Workflow:"
+        echo "  discover-ticket               - Phase 1: Extract ticket from Slack (pre-context reset)"
+        echo "  start-ticket                  - Phase 2: Initialize workspace (post-context reset)"
+        echo ""
+        echo "🔄 TDD Development:"
+        echo "  tdd-red 'test description'    - Start TDD RED cycle (write failing test)"
+        echo "  tdd-green                     - Implement GREEN cycle (make test pass)"
+        echo "  tdd-commit 'message'          - Complete REFACTOR and commit cycle"
+        echo ""
+        echo "🔀 PR Workflow:"
+        echo "  pr-ready                      - Phase 1: Quality gates and PR creation"
+        echo "  pr-monitor                    - Phase 2: Monitor feedback with Cotejar tools"
+        echo "  pr-cleanup                    - Phase 3: Post-merge cleanup and archival"
+        echo ""
+        echo "🛠️ Setup & Status:"
+        echo "  setup-hooks                   - Install git hooks for quality enforcement"
+        echo "  status                        - Show current workflow state"
+        echo ""
+        echo "Example workflow:"
+        echo "  ./spectrum-dev discover-ticket      # Extract ticket details"
+        echo "  # Optional: Clear context manually"
+        echo "  ./spectrum-dev start-ticket         # Set up workspace"
+        echo "  ./spectrum-dev tdd-red 'should validate input'"
+        echo "  ./spectrum-dev tdd-green"
+        echo "  ./spectrum-dev tdd-commit 'Add input validation'"
+        echo "  ./spectrum-dev pr-ready"
+        echo "  ./spectrum-dev pr-monitor"
+        echo "  # After PR merge:"
+        echo "  ./spectrum-dev pr-cleanup"
+        ;;
+    "status")
+        if [[ -f ".spectrum/current-ticket.json" ]]; then
+            echo -e "${INFO} Current ticket status:"
+            cat .spectrum/current-ticket.json | jq -r '"Ticket: \(.ticket) - \(.title)\nPhase: \(.phase)\nBranch: \(.branch)\nDomain: \(.domain)"'
+        else
+            echo -e "${YELLOW} No active ticket workflow"
+        fi
+        ;;
+    *)
+        command="$1"
+        shift
+        
+        if [[ -f "$COMMANDS_DIR/$command" ]]; then
+            bash "$COMMANDS_DIR/$command" "$@"
+        else
+            echo -e "${ERROR} Unknown command: $command"
+            echo "Run './spectrum-dev help' for available commands"
+            exit 1
+        fi
+        ;;
+esac

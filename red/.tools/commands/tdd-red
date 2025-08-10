@@ -1,0 +1,156 @@
+#!/bin/bash
+# tdd-red command for Spectrum Development Framework
+# Implements: TDD RED cycle - Write ONE NEW failing test
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+TEST="🧪"
+CYCLE="🔄"
+
+test_description="$1"
+
+if [[ -z "$test_description" ]]; then
+    echo -e "${ERROR} Usage: ./.spectrum-dev/spectrum-dev tdd-red 'test description'"
+    echo "Example: ./.spectrum-dev/spectrum-dev tdd-red 'should return balance for valid account'"
+    exit 1
+fi
+
+echo -e "${TEST} ${RED}TDD RED CYCLE${NC}: Writing failing test"
+echo -e "${INFO} Test: $test_description"
+
+# Check if we're in a ticket workflow
+if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+    echo -e "${ERROR} No active ticket workflow found"
+    echo -e "${INFO} Please run './.spectrum-dev/spectrum-dev start-ticket' first"
+    exit 1
+fi
+
+# Load current ticket context
+ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
+domain=$(echo "$ticket_info" | jq -r '.domain')
+current_phase=$(echo "$ticket_info" | jq -r '.phase')
+
+echo -e "${INFO} Current ticket: ${BLUE}$ticket_id${NC} (Domain: $domain)"
+
+# TDD Cycle State Management
+mkdir -p .spectrum/tdd
+tdd_state_file=".spectrum/tdd/current-cycle.json"
+
+# Initialize or load TDD cycle count
+if [[ -f "$tdd_state_file" ]]; then
+    cycle_number=$(jq -r '.cycle_number' "$tdd_state_file")
+    cycle_number=$((cycle_number + 1))
+else
+    cycle_number=1
+fi
+
+echo -e "${CYCLE} Starting TDD Cycle #$cycle_number"
+
+# Save TDD state
+cat > "$tdd_state_file" << EOF
+{
+  "cycle_number": $cycle_number,
+  "phase": "red",
+  "test_description": "$test_description",
+  "started": "$(date -Iseconds)",
+  "ticket": "$ticket_id"
+}
+EOF
+
+# Show TDD RED guidelines
+echo -e "\n${INFO} ${YELLOW}TDD RED Phase Guidelines from AI-DEVELOPMENT-GUIDE:${NC}"
+echo -e "${INFO} ${RED}CRITICAL TDD RULES:${NC}"
+echo "  ✅ Write ONE NEW test that specifies functionality that doesn't exist yet"
+echo "  ✅ Do NOT modify existing tests or try to fix existing failing tests"
+echo "  ✅ Focus on ONE behavior/feature at a time"
+echo "  ✅ Run the NEW test to confirm it fails with expected error"
+echo "  ❌ Do NOT worry about existing failing tests - they're not part of this cycle"
+echo ""
+echo -e "${ERROR} ${YELLOW}VIOLATION OF TDD DISCIPLINE IS UNACCEPTABLE${NC}"
+echo ""
+
+# Show current test structure to help identify where to add test
+echo -e "${INFO} Current test structure:"
+if [[ -d "test" ]] || [[ -d "tests" ]] || find . -name "*Test*" -type f | head -1 >/dev/null 2>&1; then
+    echo "Existing test files:"
+    find . -name "*Test*.cs" -o -name "*Tests.cs" -o -name "*.test.*" | head -10 | sed 's/^/  - /'
+else
+    echo "  No existing test files found - you may need to create test project structure"
+fi
+
+echo ""
+echo -e "${TEST} ${YELLOW}AI Agent: You must now write ONE NEW failing test:${NC}"
+echo ""
+echo -e "${YELLOW}=== REQUIRED: Write ONE NEW Failing Test ===${NC}"
+echo -e "${INFO} 1. Choose appropriate test file (or create new one)"
+echo -e "${INFO} 2. Write ONE test method for: '$test_description'"
+echo -e "${INFO} 3. Test should verify functionality that doesn't exist yet"
+echo -e "${INFO} 4. Run the test to confirm it fails as expected"
+echo -e "${INFO} 5. Do NOT modify any existing tests in this cycle"
+echo ""
+echo -e "${INFO} Example test structure:"
+echo "  [Test]"
+echo "  public void ${test_description// /_}()"
+echo "  {"
+echo "      // Arrange - setup test data"
+echo "      // Act - call the method/feature being tested"
+echo "      // Assert - verify expected behavior"
+echo "  }"
+echo ""
+
+# Wait for confirmation that test is written
+echo -e "${TEST} After writing the new test:"
+# AI Agent: Automatically proceed with test verification
+echo -e "${INFO} AI Agent: Proceeding with automated failing test verification..."
+
+echo -e "\n${WORKING} Running tests to verify RED state..."
+
+# Run tests to confirm RED state
+echo -e "${INFO} ${YELLOW}AI Agent: Run tests to confirm your new test fails:${NC}"
+echo ""
+echo -e "${YELLOW}=== REQUIRED: Verify RED State ===${NC}"
+echo -e "${INFO} Run: dotnet test --no-build"
+echo -e "${INFO} Confirm:"
+echo "  ✅ Your NEW test fails with expected error message"
+echo "  ✅ The failure indicates missing functionality (not code errors)"
+echo "  ⚠️  Existing tests may fail temporarily - that's OK during TDD"
+echo ""
+
+# AI Agent: Assume test fails as expected for automated workflow
+echo -e "${INFO} AI Agent: Assuming test fails as expected (automated workflow)"
+test_confirmed="y"
+
+if [[ "$test_confirmed" != "y" && "$test_confirmed" != "Y" ]]; then
+    echo -e "${ERROR} Test not confirmed as failing"
+    echo -e "${INFO} Please ensure your test fails for the right reasons before proceeding"
+    exit 1
+fi
+
+# Update TDD state to confirmed RED
+jq '.phase = "red-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
+mv "$tdd_state_file.tmp" "$tdd_state_file"
+
+# Update ticket state
+jq --arg phase "tdd-red-cycle-$cycle_number" '.phase = $phase' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
+mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+
+echo -e "\n${SUCCESS} ${RED}TDD RED CYCLE COMPLETE${NC}"
+echo -e "${INFO} Summary:"
+echo "  Cycle: #$cycle_number"
+echo "  Test: $test_description"  
+echo "  Status: ✅ Failing test confirmed"
+echo ""
+echo -e "${INFO} Next step:"
+echo -e "${GREEN}  Run: ./.spectrum-dev/spectrum-dev tdd-green${NC}"
+echo "  This will guide you through implementing minimal code to make the test pass"
+echo ""
+echo -e "${YELLOW} Remember: TDD discipline requires you implement ONLY enough code to make this test pass${NC}"

@@ -1,0 +1,244 @@
+#!/bin/bash
+# validate_ticket command for Agent-Knowledge
+# Automates: Ticket validation against bad patterns -> Breakdown suggestions -> Violation reporting
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+CHECK="🔍"
+BREAKDOWN="🔨"
+VALIDATE="✨"
+
+# Usage check
+if [ $# -ne 1 ]; then
+    echo -e "${ERROR} Usage: ./validate_ticket <TICKET_ID>"
+    echo -e "${INFO} Example: ./validate_ticket CEN-409"
+    exit 1
+fi
+
+TICKET_ID="$1"
+
+echo -e "${INFO} ${BLUE}Agent-Knowledge Ticket Validation Framework${NC}"
+echo -e "${VALIDATE} Validating ${TICKET_ID} against bad patterns..."
+echo ""
+
+# Step 1: Get ticket details
+echo -e "${CHECK} Step 1: Retrieving ticket details..."
+echo -e "${WORKING} Getting ticket information..."
+
+ticket_details=$(python3 .tools/saber.py get "$TICKET_ID" 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo -e "${ERROR} Failed to find ticket ${TICKET_ID}"
+    exit 1
+fi
+
+# Extract key information
+ticket_title=$(echo "$ticket_details" | jq -r '.title // "Unknown"')
+ticket_description=$(echo "$ticket_details" | jq -r '.description // ""')
+ticket_state=$(echo "$ticket_details" | jq -r '.state.name // "Unknown"')
+parent_id=$(echo "$ticket_details" | jq -r '.parent.identifier // null')
+children_count=$(echo "$ticket_details" | jq -r '.children.nodes | length')
+
+echo -e "${SUCCESS} Retrieved: ${ticket_title}"
+echo -e "${INFO} Status: ${ticket_state}"
+if [ "$parent_id" != "null" ]; then
+    echo -e "${INFO} Parent: ${parent_id}"
+fi
+if [ "$children_count" -gt 0 ]; then
+    echo -e "${INFO} Children: ${children_count} subtasks"
+fi
+
+# Step 2: Validation checks
+echo -e "${CHECK} Step 2: Running validation checks..."
+echo ""
+
+violation_count=0
+breakdown_needed=false
+
+# Check 1: Multiple Task Analysis (philosophical approach)
+echo -e "${WORKING} Checking for multiple tasks..."
+
+# Look for indicators of multiple distinct tasks (not sub-requirements)
+# Check for multiple major deliverables or components
+major_task_indicators=0
+
+# Look for "and" connecting different major components
+if echo "$ticket_description" | grep -iq -E "(implement.*and.*(build|create|develop))"; then
+    major_task_indicators=$((major_task_indicators + 1))
+fi
+
+# Look for multiple component names
+if echo "$ticket_description" | grep -iq -E "(database.*and.*(api|frontend))"; then
+    major_task_indicators=$((major_task_indicators + 1))
+fi
+
+if echo "$ticket_description" | grep -iq -E "(frontend.*and.*(backend|api))"; then
+    major_task_indicators=$((major_task_indicators + 1))
+fi
+
+# Look for sequential phases mentioned together
+if echo "$ticket_description" | grep -iq -E "(first.*then|step 1.*step 2)"; then
+    major_task_indicators=$((major_task_indicators + 1))
+fi
+
+# Look for multiple verb phrases indicating separate work streams
+distinct_verbs=$(echo "$ticket_description" | grep -io -E "(implement|build|create|develop|design|research)" | sort -u | wc -l)
+if [ "$distinct_verbs" -gt 2 ]; then
+    major_task_indicators=$((major_task_indicators + 1))
+fi
+
+if [ "$major_task_indicators" -gt 0 ]; then
+    echo -e "${WARNING} Found ${major_task_indicators} indicators of multiple major tasks"
+    violation_count=$((violation_count + 1))
+    breakdown_needed=true
+else
+    echo -e "${SUCCESS} Single focused task detected"
+fi
+
+# Check 2: Phase Mixing Detection (pattern-based)
+echo -e "${WORKING} Checking for phase mixing..."
+
+# Look for explicit phase mixing patterns
+phase_mixing_patterns=""
+
+# Research + Implementation mixing
+if echo "$ticket_description" | grep -iq -E "(research|analyze|study|investigate)" && echo "$ticket_description" | grep -iq -E "(implement|build|create|develop|code)"; then
+    phase_mixing_patterns="${phase_mixing_patterns}Research+Implementation "
+fi
+
+# Research + Design mixing (less problematic but still worth noting)
+if echo "$ticket_description" | grep -iq -E "(research|analyze|study|investigate)" && echo "$ticket_description" | grep -iq -E "(design|architect|plan|specify)"; then
+    # Only flag if it's clearly separate phases, not just "research design patterns"
+    if echo "$ticket_description" | grep -iq -E "research.*then.*design|analyze.*then.*(plan|specify)|study.*and.*(architect|design)"; then
+        phase_mixing_patterns="${phase_mixing_patterns}Research+Design "
+    fi
+fi
+
+# Design + Implementation mixing  
+if echo "$ticket_description" | grep -iq -E "(design|architect|plan|specify)" && echo "$ticket_description" | grep -iq -E "(implement|build|create|develop|code)"; then
+    # Only flag if it's clearly separate phases, not just "design implementation approach"
+    if echo "$ticket_description" | grep -iq -E "design.*then.*(implement|build)|specify.*then.*(create|develop)|plan.*and.*(implement|build)"; then
+        phase_mixing_patterns="${phase_mixing_patterns}Design+Implementation "
+    fi
+fi
+
+# Check for sequential phase indicators
+if echo "$ticket_description" | grep -iq -E "(first.*then|step 1.*step 2|phase 1.*phase 2)"; then
+    phase_mixing_patterns="${phase_mixing_patterns}Sequential-Phases "
+fi
+
+if [ -n "$phase_mixing_patterns" ]; then
+    echo -e "${WARNING} Phase mixing patterns detected: ${phase_mixing_patterns}"
+    violation_count=$((violation_count + 1))
+    breakdown_needed=true
+else
+    echo -e "${SUCCESS} Single phase focus detected"
+fi
+
+# Check 3: Context Switching Detection (only for significant context mixing)
+echo -e "${WORKING} Checking for multiple contexts..."
+contexts=""
+if echo "$ticket_description" | grep -iq -E "(database|schema|migration)" && echo "$ticket_description" | grep -iq -E "(frontend|ui|component|react)"; then 
+    contexts="${contexts}Database+Frontend "
+fi
+if echo "$ticket_description" | grep -iq -E "(database|schema|migration)" && echo "$ticket_description" | grep -iq -E "(devops|deployment|infrastructure|docker)"; then 
+    contexts="${contexts}Database+DevOps "
+fi
+if echo "$ticket_description" | grep -iq -E "(frontend|ui|component|react)" && echo "$ticket_description" | grep -iq -E "(backend|api|endpoint|server)" && ! echo "$ticket_title" | grep -iq "implement"; then
+    contexts="${contexts}Frontend+Backend "
+fi
+
+context_count=$(echo "$contexts" | wc -w)
+if [ "$context_count" -gt 0 ]; then
+    echo -e "${WARNING} Multiple contexts detected: ${contexts}"
+    violation_count=$((violation_count + 1))
+    breakdown_needed=true
+else
+    echo -e "${SUCCESS} Single context focus"
+fi
+
+# Check 4: Implementation Language in Design Tickets
+echo -e "${WORKING} Checking for implementation language in design tickets..."
+if echo "$ticket_title" | grep -iq "design"; then
+    impl_language=$(echo "$ticket_description" | grep -ic -E "(detailed|architect.*entry point|specific.*\.cs|achieve.*KB|performance targets)")
+    if [ "$impl_language" -gt 0 ]; then
+        echo -e "${WARNING} Implementation-focused language detected in design ticket"
+        violation_count=$((violation_count + 1))
+    else
+        echo -e "${SUCCESS} Proper design language used"
+    fi
+else
+    echo -e "${INFO} Not a design ticket, skipping design language check"
+fi
+
+# Check 5: Premature Performance Constraints
+echo -e "${WORKING} Checking for premature performance constraints..."
+perf_constraints=$(echo "$ticket_description" | grep -ic -E "(<[0-9]+ms|<[0-9]+KB|[0-9]+% improvement|performance targets|achieve.*ms)")
+if [ "$perf_constraints" -gt 0 ] && echo "$ticket_description" | grep -iq -E "(design|research|discovery)"; then
+    echo -e "${WARNING} Performance constraints found in discovery/design phase"
+    violation_count=$((violation_count + 1))
+else
+    echo -e "${SUCCESS} No premature performance constraints"
+fi
+
+# Check 6: External Reference Numbers
+echo -e "${WORKING} Checking for external reference numbers..."
+external_refs=$(echo "$ticket_description" | grep -c -E "[A-Z]+-[0-9]+-[0-9]+")
+if [ "$external_refs" -gt 0 ]; then
+    echo -e "${WARNING} External reference numbers found in description"
+    violation_count=$((violation_count + 1))
+else
+    echo -e "${SUCCESS} No external reference numbers"
+fi
+
+# Count keyword types for breakdown suggestions
+research_keywords=$(echo "$ticket_description" | grep -ic -E "(research|analysis|investigate|explore|study)")
+design_keywords=$(echo "$ticket_description" | grep -ic -E "(design|architect|plan|specification|blueprint)")
+implement_keywords=$(echo "$ticket_description" | grep -ic -E "(implement|build|create|develop|code)")
+
+# Step 3: Validation results
+echo ""
+echo -e "${CHECK} Step 3: Validation results..."
+
+if [ "$violation_count" -eq 0 ]; then
+    echo -e "${SUCCESS} ${GREEN}VALIDATION PASSED!${NC}"
+    echo -e "${INFO} Ticket follows good patterns"
+    echo -e "${INFO} No violations detected"
+else
+    echo -e "${ERROR} ${RED}VALIDATION FAILED!${NC}"
+    echo -e "${WARNING} ${violation_count} violations detected"
+    
+    if [ "$breakdown_needed" = true ]; then
+        echo ""
+        echo -e "${BREAKDOWN} ${YELLOW}BREAKDOWN RECOMMENDED${NC}"
+        echo -e "${INFO} This ticket should be converted to parent with subtasks"
+        echo -e "${INFO} Golden Rule: Tickets have EITHER work OR subtasks, NEVER both"
+        echo ""
+        echo -e "${BLUE}Suggested Breakdown Approach:${NC}"
+        
+        if [ "$research_keywords" -gt 0 ]; then
+            echo -e "${INFO} • Create research ticket for analysis phase"
+        fi
+        if [ "$design_keywords" -gt 0 ]; then
+            echo -e "${INFO} • Create design ticket for functional specifications"
+        fi
+        if [ "$implement_keywords" -gt 0 ]; then
+            echo -e "${INFO} • Create implementation ticket(s) for building phase"
+        fi
+        
+        if [ "$context_count" -gt 1 ]; then
+            echo -e "${INFO} • Split by technical context: ${contexts}"
+        fi
+    fi
+fi
+
+echo ""
+echo -e "${VALIDATE} ${BLUE}Validation complete for ${TICKET_ID}${NC}"

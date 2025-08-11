@@ -19,7 +19,7 @@ Describe the project here
 
 ```bash
 # 1. Search existing tickets FIRST
-./list-issues.sh | grep -i "keyword"
+saber.py list | grep -i "keyword"
 
 # 2. Epic needed? Sequential tickets (Research → Design → Implementation) = YES
 # 3. Set up parent-child relationships immediately using create-parent-child.sh
@@ -137,16 +137,16 @@ PRO-123: Wise Payment Provider Implementation [Parent]
 
 In this list, PRO replaces whatever short name Linear has given your project.  I am using 123 as an example ticket number.
 
-- `saber get PRO-123` - Get ticket details
-- `saber status PRO-123 "Status"` - Update status  
-- `saber list [status]` - List tickets with filtering
-- `saber parent PRO-child PRO-parent` - Set parent-child relationship
-- `saber epic PRO-parent PRO-sub1,PRO-sub2,PRO-sub3` - Create epic structure
-- `saber create "Title" "Description"` - Create tickets
-- `saber comment PRO-123 "Comment"` - Add comments
-- `saber description PRO-123 "New description"` - Update descriptions
-- `saber label PRO-123 add "bug,urgent"` - Add labels
-- `saber labels` - List all available labels
+- `saber.py get PRO-123` - Get ticket details
+- `saber.py status PRO-123 "Status"` - Update status  
+- `saber.py list [status]` - List tickets with filtering
+- `saber.py parent PRO-child PRO-parent` - Set parent-child relationship
+- `saber.py epic PRO-parent PRO-sub1,PRO-sub2,PRO-sub3` - Create epic structure
+- `saber.py create "Title" "Description"` - Create tickets
+- `saber.py comment PRO-123 "Comment"` - Add comments
+- `saber.py description PRO-123 "New description"` - Update descriptions
+- `saber.py label PRO-123 add "bug,urgent"` - Add labels
+- `saber.py labels` - List all available labels
 
 **Bash Automation Scripts:**
 
@@ -166,8 +166,8 @@ Important tool choices:
 slack_rest_client is in your path. Try slack_rest_client --help to get full details.
 
 ```bash
-.tools/slack_rest_client.py send_message "Message"
-.tools/slack_rest_client.py get_messages 10
+slack_rest_client.py send_message "Message"
+slack_rest_client.py get_messages 10
 ```
 
 ## Working with {AGENT_RED} and {AGENT_BLUE}

@@ -423,10 +423,11 @@ class SlackAPIClient:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     content = await response.read()
+                    import base64
                     return {
                         "success": True,
                         "filename": file_info.get("name"),
-                        "content": content,
+                        "content": base64.b64encode(content).decode('utf-8'),
                         "mimetype": file_info.get("mimetype")
                     }
                 else:

@@ -335,12 +335,31 @@ class SlackRESTClient:
         response = requests.get(f"{self.base_url}/download_file", params=params)
         
         if response.status_code == 200:
+            # Parse JSON response and decode base64 content
+            import base64
+            data = response.json()
+            
+            if not data.get("success"):
+                return {"success": False, "error": data.get("error", "Download failed")}
+            
+            result = data.get("result", {})
+            base64_content = result.get("content", "")
+            filename = result.get("filename", "downloaded_file")
+            
+            # Decode base64 content to bytes
+            file_content = base64.b64decode(base64_content)
+            
             # Save the file content
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             with open(save_path, 'wb') as f:
-                f.write(response.content)
+                f.write(file_content)
             
-            return {"success": True, "message": f"File saved to {save_path}"}
+            return {
+                "success": True, 
+                "message": f"File saved to {save_path}",
+                "filename": filename,
+                "size": len(file_content)
+            }
         else:
             raise Exception(f"HTTP {response.status_code}: {response.text}")
     

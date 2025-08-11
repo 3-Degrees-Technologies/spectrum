@@ -462,8 +462,26 @@ class HTTPServer:
             except OSError:
                 return False
         
-        # Get current working directory for port calculation
-        project_path = os.getcwd()
+        def get_project_root(current_path: str) -> str:
+            """Find the project root directory for consistent port calculation"""
+            path = Path(current_path).resolve()
+            
+            # Look for specific markers that indicate project root
+            # Check for cricket-poster directory name in path
+            for parent in [path] + list(path.parents):
+                if parent.name == 'cricket-poster':
+                    return str(parent)
+            
+            # Fallback: if we're in a known agent/service folder, move up one level
+            current_dir = path.name
+            if current_dir in ['red', 'blue', 'green', 'black', '.puente']:
+                return str(path.parent)
+            
+            # Final fallback: use current directory
+            return str(path)
+        
+        # Get project root directory for consistent port calculation
+        project_path = get_project_root(os.getcwd())
         
         # Try hash-based port first
         derived_port = get_project_port(project_path)
@@ -1133,6 +1151,10 @@ class SlackDaemon:
                 "status": "healthy",
                 "uptime": "running",
                 "version": "2.0.0-consolidated",
+                "port": self.http_server.port if self.http_server else "unknown",
+                "host": self.http_server.host if self.http_server else "unknown", 
+                "default_channel": self.default_channel,
+                "config_path": self.config_path,
                 "agents": list(self.slack_clients.keys()),
                 "agent_configs": {color: config.get("name", f"Agent-{color.title()}") 
                                 for color, config in self.agent_configs.items()}

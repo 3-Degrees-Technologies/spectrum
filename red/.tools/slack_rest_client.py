@@ -382,6 +382,50 @@ class SlackRESTClient:
             return response.json()
         else:
             raise Exception(f"HTTP {response.status_code}: {response.text}")
+    
+    def get_connection_info(self) -> Dict[str, Any]:
+        """
+        Get diagnostic information about the client connection
+        
+        Returns:
+            Dict with connection details including port calculation
+        """
+        import hashlib
+        import os
+        
+        # Calculate expected port using same logic as _discover_running_daemon
+        BASE_PORT = 19842
+        PORT_RANGE_SIZE = 100
+        project_path = os.getcwd()
+        path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()
+        hash_int = int(path_hash[:8], 16)
+        port_offset = hash_int % PORT_RANGE_SIZE
+        expected_port = BASE_PORT + port_offset
+        
+        # Extract actual port from base_url
+        actual_port = self.base_url.split(':')[-1]
+        
+        connection_info = {
+            "connecting_to": self.base_url,
+            "actual_port": int(actual_port),
+            "project_path": project_path,
+            "path_hash": path_hash[:8],
+            "expected_port": expected_port,
+            "port_match": int(actual_port) == expected_port,
+            "detected_agent_color": self._detect_agent_color()
+        }
+        
+        # Try to get health info from the connected daemon
+        try:
+            health_response = requests.get(f"{self.base_url}/health", timeout=2)
+            if health_response.status_code == 200:
+                health_data = health_response.json()
+                if health_data.get("success"):
+                    connection_info["daemon_health"] = health_data["result"]
+        except Exception as e:
+            connection_info["daemon_health_error"] = str(e)
+        
+        return connection_info
 
 # CLI interface for easy command line usage
 def show_help():
@@ -421,6 +465,9 @@ def show_help():
     print()
     print("  detect_agent")
     print("      Show detected agent name and detection details")
+    print()
+    print("  connection_info")
+    print("      Show connection details including port calculation and daemon info")
     print()
     print("  upload_file <file_path> [comment] [--channel=CHANNEL]")
     print("      Upload a file to Slack with optional comment")
@@ -543,6 +590,10 @@ def main():
                         print(f".agent file contains: '{content}'")
                 except:
                     print(".agent file exists but couldn't read it")
+        
+        elif command == "connection_info":
+            result = client.get_connection_info()
+            print(json.dumps(result, indent=2))
         
         elif command == "get_messages":
             limit = int(sys.argv[2]) if len(sys.argv) > 2 else 50

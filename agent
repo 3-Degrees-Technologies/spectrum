@@ -25,7 +25,7 @@ if [[ $# -lt 1 ]]; then
     echo "Usage: agent <color>"
     echo ""
     echo "Spectrum AI Agent Conventions:"
-    echo "  green   → $(get_agent_name green) in ."
+    echo "  green   → $(get_agent_name green) in ./green"
     echo "  red     → $(get_agent_name red) in ./red"
     echo "  blue    → $(get_agent_name blue) in ./blue"
     exit 1
@@ -42,7 +42,7 @@ fi
 case "$AGENT_COLOR" in
     "green")
         AGENT_NAME="$(get_agent_name green)"
-        WORK_DIR="."
+        WORK_DIR="./green"
         ;;
     "red")  
         AGENT_NAME="$(get_agent_name red)"
@@ -62,18 +62,9 @@ case "$AGENT_COLOR" in
             mkdir -p "./blue"
         fi
         ;;
-    "black")
-        AGENT_NAME="$(get_agent_name black)"
-        WORK_DIR="./blue"
-        # Ensure blue directory exists (black uses blue directory)
-        if [[ ! -d "./blue" ]]; then
-            echo "📁 Creating blue directory for $AGENT_NAME..."
-            mkdir -p "./blue"
-        fi
-        ;;
     *)
         echo "❌ Unknown agent: $AGENT_COLOR"
-        echo "Available: green, red, scarlet, blue, black"
+        echo "Available: green, red, blue"
         exit 1
         ;;
 esac

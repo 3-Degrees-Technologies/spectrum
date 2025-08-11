@@ -466,9 +466,27 @@ class HTTPServer:
         import socket
         import os
         
-        # Configuration constants - TEST SERVER uses different port range
-        BASE_PORT = 19950  # Different range to avoid conflicts
-        PORT_RANGE_SIZE = 50  # 19950-19999 (test instance slots)
+        # PRODUCTION PORT CONFIGURATION
+        # Port ranges are used to isolate different environments and allow multiple instances
+        # 
+        # PRODUCTION RANGE: 19842-19941 (100 ports)
+        #   - Used for live/production puente instances  
+        #   - Located in: puente/ directory
+        #   - Wider range supports more concurrent projects
+        #
+        # TEST RANGE: 19950-19999 (50 ports) 
+        #   - Used for development/testing puente instances
+        #   - Located in: puenteserver/, puenteclient/ directories
+        #   - Isolated from production to prevent conflicts
+        #
+        # Port Selection Logic:
+        #   1. Hash project directory path (ensures consistency across server/client)
+        #   2. Calculate offset: hash % PORT_RANGE_SIZE  
+        #   3. Final port: BASE_PORT + offset
+        #   4. If unavailable, scan range for next free port
+        
+        BASE_PORT = 19842  # PRODUCTION range start
+        PORT_RANGE_SIZE = 100  # PRODUCTION range: 19842-19941 (100 slots)
         MAX_PORT = BASE_PORT + PORT_RANGE_SIZE - 1
         
         def get_project_port(project_path: str) -> int:
@@ -487,15 +505,9 @@ class HTTPServer:
             except OSError:
                 return False
         
-        def get_project_root(current_path: str) -> str:
-            """Find the project root directory for consistent port calculation"""
-            path = Path(current_path).resolve()
-            
-            # Use parent directory for consistent port calculation across projects
-            return str(path.parent)
-        
-        # Get project root directory for consistent port calculation
-        project_path = get_project_root(os.getcwd())
+        # Get project root directory for consistent port calculation  
+        # Server runs from .puente/ so current directory IS the parent we want to hash
+        project_path = os.getcwd()
         
         # Try hash-based port first
         derived_port = get_project_port(project_path)

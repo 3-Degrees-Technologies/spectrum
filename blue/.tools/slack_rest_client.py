@@ -28,9 +28,27 @@ class SlackRESTClient:
         import hashlib
         import socket
         
-        # Configuration constants - TEST SERVER uses different port range
-        BASE_PORT = 19950  # Different range to avoid conflicts
-        PORT_RANGE_SIZE = 50  # 19950-19999 (test instance slots)
+        # PRODUCTION PORT CONFIGURATION
+        # Port ranges are used to isolate different environments and allow multiple instances
+        # 
+        # PRODUCTION RANGE: 19842-19941 (100 ports)
+        #   - Used for live/production puente instances  
+        #   - Located in: puente/ directory
+        #   - Wider range supports more concurrent projects
+        #
+        # TEST RANGE: 19950-19999 (50 ports) 
+        #   - Used for development/testing puente instances
+        #   - Located in: puenteserver/, puenteclient/ directories
+        #   - Isolated from production to prevent conflicts
+        #
+        # Port Selection Logic:
+        #   1. Hash project directory path (ensures consistency across server/client)
+        #   2. Calculate offset: hash % PORT_RANGE_SIZE  
+        #   3. Final port: BASE_PORT + offset
+        #   4. Client connects ONLY to calculated port (no fallbacks)
+        
+        BASE_PORT = 19842  # PRODUCTION range start
+        PORT_RANGE_SIZE = 100  # PRODUCTION range: 19842-19941 (100 slots)
         
         def get_project_port(project_path: str) -> int:
             """Derive consistent port from project path hash (same as puente.py)"""
@@ -63,7 +81,7 @@ class SlackRESTClient:
         derived_port = get_project_port(project_path)
         test_url = f"http://127.0.0.1:{derived_port}"
         
-        # Verify it's actually our daemon by checking health endpoint
+        # Test ONLY the calculated port - no fallbacks
         if is_port_available(derived_port):
             try:
                 response = requests.get(f"{test_url}/health", timeout=1)
@@ -71,27 +89,11 @@ class SlackRESTClient:
                     data = response.json()
                     if data.get("success") and "agents" in data.get("result", {}):
                         return test_url
-            except:
-                pass
+            except Exception as e:
+                raise ConnectionError(f"Daemon found on expected port {derived_port} but health check failed: {e}")
         
-        # Fallback: scan port range (for backwards compatibility)
-        for port in range(BASE_PORT, BASE_PORT + PORT_RANGE_SIZE):
-            if port == derived_port:
-                continue  # Already tested above
-            
-            if is_port_available(port):
-                try:
-                    test_url = f"http://127.0.0.1:{port}"
-                    response = requests.get(f"{test_url}/health", timeout=1)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("success") and "agents" in data.get("result", {}):
-                            return test_url
-                except:
-                    continue
-        
-        # Final fallback to base port
-        return f"http://127.0.0.1:{BASE_PORT}"
+        # Fatal error if daemon not found on expected port
+        raise ConnectionError(f"No daemon found on expected port {derived_port} (calculated from path: {project_path})")
     
     def _detect_agent_color(self) -> str:
         """

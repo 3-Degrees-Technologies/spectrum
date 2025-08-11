@@ -28,9 +28,9 @@ class SlackRESTClient:
         import hashlib
         import socket
         
-        # Configuration constants (same as puente.py)
-        BASE_PORT = 19842
-        PORT_RANGE_SIZE = 100  # 19842-19941 (100 instance slots)
+        # Configuration constants (TEST CLIENT - matches test server)
+        BASE_PORT = 19950  # Different range to avoid conflicts
+        PORT_RANGE_SIZE = 50  # 19950-19999 (test instance slots)
         
         def get_project_port(project_path: str) -> int:
             """Derive consistent port from project path hash (same as puente.py)"""
@@ -48,9 +48,17 @@ class SlackRESTClient:
                     return result == 0  # 0 means connection successful (port occupied)
             except OSError:
                 return False
+        def get_project_root(current_path: str) -> str:
+            """Find the project root directory for consistent port calculation"""
+            from pathlib import Path
+            path = Path(current_path).resolve()
+            
+            # TEST CLIENT: Use local directory for isolation
+            return str(path)
+            return str(path)
         
-        # Get current working directory for port calculation (same as puente.py)
-        project_path = os.getcwd()
+        # Get project root directory for consistent port calculation
+        project_path = get_project_root(os.getcwd())
         
         # Calculate hash-based port first
         derived_port = get_project_port(project_path)
@@ -393,10 +401,30 @@ class SlackRESTClient:
         import hashlib
         import os
         
+        def get_project_root(current_path: str) -> str:
+            """Find the project root directory for consistent port calculation"""
+            from pathlib import Path
+            path = Path(current_path).resolve()
+            
+            # Look for specific markers that indicate project root
+            # Check for cricket-poster directory name in path
+            for parent in [path] + list(path.parents):
+                if parent.name == 'cricket-poster':
+                    return str(parent)
+            
+            # Fallback: if we're in a known agent/service folder, move up one level
+            current_dir = path.name
+            if current_dir in ['red', 'blue', 'green', 'black', '.puente']:
+                return str(path.parent)
+            
+            # Final fallback: use current directory
+            return str(path)
+        
         # Calculate expected port using same logic as _discover_running_daemon
         BASE_PORT = 19842
         PORT_RANGE_SIZE = 100
-        project_path = os.getcwd()
+        # Get project root directory for consistent port calculation
+        project_path = get_project_root(os.getcwd())
         path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()
         hash_int = int(path_hash[:8], 16)
         port_offset = hash_int % PORT_RANGE_SIZE

@@ -161,6 +161,10 @@ class SlackAPIClient:
             "Authorization": f"Bearer {self.bot_token}"
         }
         
+        # DEBUG: Log request details
+        logger.info(f"Making {method} request to {endpoint}")
+        logger.info(f"Request data: {data}")
+        
         # Check if data is FormData (for file uploads)
         import aiohttp
         is_form_data = isinstance(data, aiohttp.FormData)
@@ -175,12 +179,22 @@ class SlackAPIClient:
                     async with self.session.post(url, headers=headers, data=data) as response:
                         result = await response.json()
                 else:
-                    # For regular API calls, use JSON
-                    async with self.session.post(url, headers=headers, json=data) as response:
-                        result = await response.json()
+                    # For regular API calls - check if endpoint requires form data
+                    if endpoint == "files.getUploadURLExternal":
+                        # This endpoint expects form data, not JSON
+                        headers.pop("Content-Type", None)  # Let aiohttp set the correct content-type
+                        async with self.session.post(url, headers=headers, data=data) as response:
+                            result = await response.json()
+                    else:
+                        # Regular JSON API calls (including files.completeUploadExternal)
+                        async with self.session.post(url, headers=headers, json=data) as response:
+                            result = await response.json()
             else:
                 async with self.session.get(url, headers=headers, params=data) as response:
                     result = await response.json()
+            
+            # DEBUG: Log response
+            logger.info(f"Response from {endpoint}: {result}")
             
             if not result.get("ok"):
                 logger.error(f"Slack API error: {result.get('error')}")
@@ -319,23 +333,33 @@ class SlackAPIClient:
         """Upload a file to Slack using files.uploadV2"""
         import aiohttp
         
+        logger.info(f"Starting file upload: {filename} ({len(file_data)} bytes) to channel {channel}")
+        
         # Step 1: Get upload URL
         upload_params = {
             "filename": filename,
             "length": len(file_data)
         }
         
+        logger.info(f"Getting upload URL with params: {upload_params}")
         upload_info = await self._make_request("files.getUploadURLExternal", data=upload_params, endpoint_type="file")
         upload_url = upload_info.get("upload_url")
         file_id = upload_info.get("file_id")
         
         if not upload_url or not file_id:
+            logger.error(f"Upload URL response: {upload_info}")
             raise ValueError("Failed to get upload URL from Slack")
         
+        logger.info(f"Got upload URL and file_id: {file_id}")
+        
         # Step 2: Upload file to the URL
-        async with self.session.put(upload_url, data=file_data) as response:
+        async with self.session.post(upload_url, data=file_data) as response:
             if response.status != 200:
+                response_text = await response.text()
+                logger.error(f"File upload failed: {response.status} - {response_text}")
                 raise ValueError(f"Failed to upload file: {response.status}")
+        
+        logger.info("File uploaded successfully, completing...")
         
         # Step 3: Complete the upload
         complete_params = {
@@ -347,6 +371,7 @@ class SlackAPIClient:
         if comment:
             complete_params["initial_comment"] = comment
         
+        logger.info(f"Completing upload with params: {complete_params}")
         result = await self._make_request("files.completeUploadExternal", data=complete_params, endpoint_type="file")
         
         return {
@@ -394,7 +419,7 @@ class SlackAPIClient:
         
         import aiohttp
         async with aiohttp.ClientSession() as session:
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers = {"Authorization": f"Bearer {self.bot_token}"}
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     content = await response.read()
@@ -441,9 +466,9 @@ class HTTPServer:
         import socket
         import os
         
-        # Configuration constants
-        BASE_PORT = 19842
-        PORT_RANGE_SIZE = 100  # 19842-19941 (100 instance slots)
+        # Configuration constants - TEST SERVER uses different port range
+        BASE_PORT = 19950  # Different range to avoid conflicts
+        PORT_RANGE_SIZE = 50  # 19950-19999 (test instance slots)
         MAX_PORT = BASE_PORT + PORT_RANGE_SIZE - 1
         
         def get_project_port(project_path: str) -> int:
@@ -466,18 +491,8 @@ class HTTPServer:
             """Find the project root directory for consistent port calculation"""
             path = Path(current_path).resolve()
             
-            # Look for specific markers that indicate project root
-            # Check for cricket-poster directory name in path
-            for parent in [path] + list(path.parents):
-                if parent.name == 'cricket-poster':
-                    return str(parent)
-            
-            # Fallback: if we're in a known agent/service folder, move up one level
-            current_dir = path.name
-            if current_dir in ['red', 'blue', 'green', 'black', '.puente']:
-                return str(path.parent)
-            
-            # Final fallback: use current directory
+            # TEST SERVER: Use local directory for isolation
+            return str(path)
             return str(path)
         
         # Get project root directory for consistent port calculation
@@ -1063,6 +1078,14 @@ class SlackDaemon:
         async def upload_file(params: Dict) -> Dict:
             """Upload a file to Slack"""
             try:
+                # DEBUG: Log all received parameters
+                logger.info(f"Upload request parameters: {list(params.keys())}")
+                logger.info(f"Channel: {params.get('channel')}, Default: {self.default_channel}")
+                logger.info(f"Agent: {params.get('agent_color')}")
+                logger.info(f"Filename: {params.get('filename')}")
+                logger.info(f"Comment: {params.get('comment')}")
+                logger.info(f"File data size: {len(params.get('file_data', []))}")
+                
                 file_data = params.get("file_data")
                 filename = params.get("filename")
                 comment = params.get("comment", "")
@@ -1081,6 +1104,7 @@ class SlackDaemon:
                 if not slack_client:
                     raise ValueError("Slack client not available")
                 
+                logger.info(f"Attempting upload with Slack client for {agent_identifier}")
                 result = await slack_client.upload_file(file_data, filename, comment, channel)
                 return result
             except Exception as e:

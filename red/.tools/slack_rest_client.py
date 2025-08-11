@@ -28,7 +28,7 @@ class SlackRESTClient:
         import hashlib
         import socket
         
-        # Configuration constants (TEST CLIENT - matches test server)
+        # Configuration constants - TEST SERVER uses different port range
         BASE_PORT = 19950  # Different range to avoid conflicts
         PORT_RANGE_SIZE = 50  # 19950-19999 (test instance slots)
         
@@ -53,9 +53,8 @@ class SlackRESTClient:
             from pathlib import Path
             path = Path(current_path).resolve()
             
-            # TEST CLIENT: Use local directory for isolation
-            return str(path)
-            return str(path)
+            # Use parent directory for consistent port calculation across projects
+            return str(path.parent)
         
         # Get project root directory for consistent port calculation
         project_path = get_project_root(os.getcwd())
@@ -406,23 +405,12 @@ class SlackRESTClient:
             from pathlib import Path
             path = Path(current_path).resolve()
             
-            # Look for specific markers that indicate project root
-            # Check for cricket-poster directory name in path
-            for parent in [path] + list(path.parents):
-                if parent.name == 'cricket-poster':
-                    return str(parent)
-            
-            # Fallback: if we're in a known agent/service folder, move up one level
-            current_dir = path.name
-            if current_dir in ['red', 'blue', 'green', 'black', '.puente']:
-                return str(path.parent)
-            
-            # Final fallback: use current directory
-            return str(path)
+            # Use parent directory for consistent port calculation across projects
+            return str(path.parent)
         
         # Calculate expected port using same logic as _discover_running_daemon
-        BASE_PORT = 19842
-        PORT_RANGE_SIZE = 100
+        BASE_PORT = 19950
+        PORT_RANGE_SIZE = 50
         # Get project root directory for consistent port calculation
         project_path = get_project_root(os.getcwd())
         path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()

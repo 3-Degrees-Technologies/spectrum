@@ -491,9 +491,8 @@ class HTTPServer:
             """Find the project root directory for consistent port calculation"""
             path = Path(current_path).resolve()
             
-            # TEST SERVER: Use local directory for isolation
-            return str(path)
-            return str(path)
+            # Use parent directory for consistent port calculation across projects
+            return str(path.parent)
         
         # Get project root directory for consistent port calculation
         project_path = get_project_root(os.getcwd())

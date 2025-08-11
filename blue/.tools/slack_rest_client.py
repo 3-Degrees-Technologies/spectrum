@@ -22,37 +22,69 @@ class SlackRESTClient:
     
     def _discover_running_daemon(self) -> str:
         """
-        Discover running Slack daemon by testing common ports
-        Scans port range to find an active daemon
+        Calculate the daemon port using the same hash-based logic as puente.py
+        This ensures we connect to the correct port deterministically
         """
+        import hashlib
         import socket
-        from contextlib import closing
         
-        # Common port range for Slack daemons
-        base_port = 19842
-        port_range = 100
+        # Configuration constants (same as puente.py)
+        BASE_PORT = 19842
+        PORT_RANGE_SIZE = 100  # 19842-19941 (100 instance slots)
         
-        for port in range(base_port, base_port + port_range):
+        def get_project_port(project_path: str) -> int:
+            """Derive consistent port from project path hash (same as puente.py)"""
+            path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()
+            hash_int = int(path_hash[:8], 16)
+            port_offset = hash_int % PORT_RANGE_SIZE
+            return BASE_PORT + port_offset
+        
+        def is_port_available(port: int) -> bool:
+            """Check if a port has a service running"""
             try:
-                # Quick socket test to see if port is occupied
-                with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(0.1)
-                    if sock.connect_ex(('127.0.0.1', port)) == 0:
-                        # Port is occupied, test if it's our daemon
-                        test_url = f"http://127.0.0.1:{port}"
-                        try:
-                            response = requests.get(f"{test_url}/health", timeout=1)
-                            if response.status_code == 200:
-                                data = response.json()
-                                if data.get("success") and "agents" in data.get("result", {}):
-                                    return test_url
-                        except:
-                            continue
+                    result = sock.connect_ex(('127.0.0.1', port))
+                    return result == 0  # 0 means connection successful (port occupied)
+            except OSError:
+                return False
+        
+        # Get current working directory for port calculation (same as puente.py)
+        project_path = os.getcwd()
+        
+        # Calculate hash-based port first
+        derived_port = get_project_port(project_path)
+        test_url = f"http://127.0.0.1:{derived_port}"
+        
+        # Verify it's actually our daemon by checking health endpoint
+        if is_port_available(derived_port):
+            try:
+                response = requests.get(f"{test_url}/health", timeout=1)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success") and "agents" in data.get("result", {}):
+                        return test_url
             except:
-                continue
-                
-        # Fallback to default port
-        return "http://127.0.0.1:19842"
+                pass
+        
+        # Fallback: scan port range (for backwards compatibility)
+        for port in range(BASE_PORT, BASE_PORT + PORT_RANGE_SIZE):
+            if port == derived_port:
+                continue  # Already tested above
+            
+            if is_port_available(port):
+                try:
+                    test_url = f"http://127.0.0.1:{port}"
+                    response = requests.get(f"{test_url}/health", timeout=1)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("success") and "agents" in data.get("result", {}):
+                            return test_url
+                except:
+                    continue
+        
+        # Final fallback to base port
+        return f"http://127.0.0.1:{BASE_PORT}"
     
     def _detect_agent_color(self) -> str:
         """

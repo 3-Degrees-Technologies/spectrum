@@ -13,10 +13,10 @@ from pathlib import Path
 
 class Saber:
     def __init__(self, debug: bool = False):
+        self.debug = debug or os.getenv("SABER_DEBUG", "").lower() in ("true", "1", "yes")
         self.api_key = self._get_api_key()
         self.api_url = "https://api.linear.app/graphql"
         self.team_id = self._get_team_id()
-        self.debug = debug or os.getenv("SABER_DEBUG", "").lower() in ("true", "1", "yes")
         self.headers = {
             "Authorization": self.api_key,
             "Content-Type": "application/json"
@@ -38,7 +38,7 @@ class Saber:
         raise Exception("LINEAR_API_KEY not found in environment or .env file")
     
     def _get_team_id(self) -> str:
-        """Get team ID from environment or .env file"""
+        """Get team ID from environment, .env file, or auto-discover"""
         team_id = os.getenv("LINEAR_TEAM_ID")
         if team_id:
             return team_id
@@ -48,10 +48,22 @@ class Saber:
         if env_file.exists():
             for line in env_file.read_text().splitlines():
                 if line.startswith("LINEAR_TEAM_ID"):
-                    return line.split("=")[1].strip().strip('"')
+                    team_value = line.split("=")[1].strip().strip('"')
+                    if team_value:  # Only return if not empty
+                        return team_value
         
-        # No default fallback - require LINEAR_TEAM_ID to be set
-        raise Exception("LINEAR_TEAM_ID not found in environment or .env file. Please set LINEAR_TEAM_ID environment variable.")
+        # Auto-discover team ID
+        try:
+            discovered_team_id = self._discover_team_id()
+            if discovered_team_id:
+                self._save_team_id_to_env(discovered_team_id)
+                return discovered_team_id
+        except Exception as e:
+            if self.debug:
+                print(f"🔍 Team auto-discovery failed: {e}")
+        
+        # No fallback available
+        raise Exception("LINEAR_TEAM_ID not found and auto-discovery failed. Please set LINEAR_TEAM_ID environment variable.")
     
     def _execute_query(self, query: str, variables: Dict = None) -> Dict:
         """Execute GraphQL query/mutation with enhanced error handling"""
@@ -545,7 +557,132 @@ class Saber:
         # Return the team key (project prefix)
         return team["key"]
     
-    def save_project_config(self) -> str:
+    def _discover_team_id(self) -> Optional[str]:
+        """Auto-discover team ID by finding user's primary team"""
+        query = """
+        query DiscoverTeams {
+            viewer {
+                teams {
+                    nodes {
+                        id
+                        name
+                        key
+                    }
+                }
+            }
+        }
+        """
+        
+        # Create a minimal headers dict for discovery (before full init)
+        discovery_headers = {
+            "Authorization": self.api_key,
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = requests.post(self.api_url, headers=discovery_headers, json={"query": query})
+            response.raise_for_status()
+            result = response.json()
+            
+            if "errors" in result:
+                raise Exception(f"GraphQL errors: {result['errors']}")
+            
+            teams = result["data"]["viewer"]["teams"]["nodes"]
+            
+            if not teams:
+                raise Exception("No teams found for user")
+            
+            if len(teams) == 1:
+                # Single team - use it
+                team = teams[0]
+                if self.debug:
+                    print(f"🎯 Auto-discovered team: {team['name']} (KEY: {team['key']}, ID: {team['id']})")
+                return team["id"]
+            else:
+                # Multiple teams - show options and use first one
+                team = teams[0]
+                team_list = ", ".join([f"{t['name']} ({t['key']})" for t in teams])
+                if self.debug:
+                    print(f"🎯 Multiple teams found: {team_list}")
+                    print(f"🎯 Using first team: {team['name']} (KEY: {team['key']}, ID: {team['id']})")
+                return team["id"]
+                
+        except Exception as e:
+            if self.debug:
+                print(f"❌ Team discovery failed: {e}")
+            raise
+    
+    def _save_team_id_to_env(self, team_id: str) -> None:
+        """Save discovered team ID to .env file"""
+        env_file = Path(".env")
+        
+        if env_file.exists():
+            # Read existing .env content
+            lines = env_file.read_text().splitlines()
+            
+            # Update or add LINEAR_TEAM_ID line
+            updated = False
+            for i, line in enumerate(lines):
+                if line.startswith("LINEAR_TEAM_ID"):
+                    lines[i] = f"LINEAR_TEAM_ID={team_id}"
+                    updated = True
+                    break
+            
+            if not updated:
+                lines.append(f"LINEAR_TEAM_ID={team_id}")
+            
+            # Write back to file
+            env_file.write_text("\n".join(lines) + "\n")
+            
+            if self.debug:
+                print(f"💾 Saved team ID to .env file: {team_id}")
+        else:
+            # Create new .env file
+            env_file.write_text(f"LINEAR_TEAM_ID={team_id}\n")
+            if self.debug:
+                print(f"💾 Created .env file with team ID: {team_id}")
+
+    def discover_teams(self) -> List[Dict]:
+        """Public method to discover and display available teams"""
+        query = """
+        query GetTeams {
+            teams {
+                nodes {
+                    id
+                    name
+                    key
+                    description
+                }
+            }
+            viewer {
+                id
+                name
+                email
+                teams {
+                    nodes {
+                        id
+                        name
+                        key
+                    }
+                }
+            }
+        }
+        """
+        
+        # Use minimal headers for discovery
+        discovery_headers = {
+            "Authorization": self.api_key,
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(self.api_url, headers=discovery_headers, json={"query": query})
+        response.raise_for_status()
+        result = response.json()
+        
+        if "errors" in result:
+            raise Exception(f"GraphQL errors: {result['errors']}")
+        
+        return result["data"]
         """Save project configuration including prefix"""
         prefix = self.get_project_prefix()
         
@@ -631,35 +768,122 @@ class Saber:
 
 # CLI INTERFACE
 
-def main():
-    if len(sys.argv) < 2:
-        print("""
-Saber - The Ultimate Linear Management Tool
+def print_help():
+    """Print comprehensive help information"""
+    help_text = """
+🗡️  SABER - The Ultimate Linear Management Tool
+═══════════════════════════════════════════════
 
-Usage:
-    python3 saber.py create "Title" "Description" [status] [priority]
-    python3 saber.py get XXX-123
-    python3 saber.py status XXX-123 "In Progress"
-    python3 saber.py description XXX-123 "New description"
-    python3 saber.py comment XXX-123 "Progress update"
-    python3 saber.py parent XXX-123 XXX-456
-    python3 saber.py unparent XXX-123
-    python3 saber.py assign XXX-123 user@example.com
-    python3 saber.py list [status] [assignee@email.com]
-    python3 saber.py epic XXX-123 XXX-124,XXX-125,XXX-126
+BASIC USAGE:
+    python3 saber.py <command> [arguments...]
+    python3 saber.py --help    # Show this help
+    python3 saber.py --debug   # Enable debug output
+
+TICKET OPERATIONS:
+    create "Title" "Description" [status] [priority]
+        Create new ticket (status: Todo, priority: 0-4)
+        
+    get XXX-123
+        Get detailed ticket information (JSON format)
+        
+    list [status] [assignee@email.com]
+        List tickets with optional filtering
+        Examples: list | list "In Progress" | list todo john@example.com
+
+STATUS MANAGEMENT:
+    status XXX-123 "In Progress"
+        Update ticket status (Todo, In Progress, Done, Backlog, Canceled)
+        
+    assign XXX-123 user@example.com
+        Assign ticket to user by email
+
+CONTENT UPDATES:
+    description XXX-123 "New description"
+        Update ticket description
+        
+    comment XXX-123 "Progress update"
+        Add comment to ticket
+
+PARENT-CHILD RELATIONSHIPS:
+    parent XXX-123 XXX-456
+        Set XXX-123 as child of XXX-456 (epic structure)
+        
+    unparent XXX-123
+        Remove parent relationship from ticket
+        
+    epic XXX-123 XXX-124,XXX-125,XXX-126
+        Create epic with subtasks (bulk parent-child setup)
+
+LABEL MANAGEMENT:
+    labels
+        List all available labels
+        
+    labels XXX-123
+        List labels on specific ticket
+        
+    label XXX-123 add "bug,urgent"
+        Add labels to ticket (comma-separated)
+        
+    label XXX-123 remove "wip"
+        Remove labels from ticket
+        
+    create-label "new-label" "#ff0000" "Description"
+        Create new label (color optional, description optional)
+
+TEAM MANAGEMENT:
+    discover
+        Show available teams and current configuration
+        
+    config
+        Save current team configuration
+        
+    prefix
+        Get/save project prefix (team key)
+
+ENVIRONMENT SETUP:
+    Required:
+        LINEAR_API_KEY=lin_api_xxx    # Your Linear API key
+        
+    Optional:
+        LINEAR_TEAM_ID=team-uuid      # Auto-discovered if not set
+        SABER_DEBUG=true             # Enable debug output
+
+EXAMPLES:
+    # Create a bug ticket
+    python3 saber.py create "Fix login issue" "Users cannot log in with Google OAuth" "Todo" 3
     
-    Label operations:
-    python3 saber.py labels                           # List all labels
-    python3 saber.py labels XXX-123                   # List ticket labels
-    python3 saber.py label XXX-123 add "bug,urgent"  # Add labels
-    python3 saber.py label XXX-123 remove "wip"      # Remove labels
-    python3 saber.py create-label "new-label" "#ff0000" "Description"
+    # List all in-progress tickets  
+    python3 saber.py list "In Progress"
+    
+    # Create epic structure
+    python3 saber.py create "User Auth Epic" "Comprehensive user authentication system"
+    python3 saber.py create "Google OAuth" "Implement Google OAuth integration" 
+    python3 saber.py create "Password Reset" "Add password reset functionality"
+    python3 saber.py epic CRI-10 CRI-11,CRI-12
+    
+    # Add labels and assign
+    python3 saber.py label CRI-11 add "backend,oauth"
+    python3 saber.py assign CRI-11 developer@company.com
+    python3 saber.py status CRI-11 "In Progress"
 
-Environment variables:
-    SABER_DEBUG=true                                  # Enable debug output
-    LINEAR_API_KEY=lin_api_xxx                        # Set API key (required)
-    LINEAR_TEAM_ID=team-uuid                          # Set team ID (required)
-        """)
+TIPS:
+    • Use quotes around arguments with spaces
+    • Team ID is auto-discovered on first run if not configured
+    • Debug mode shows full GraphQL queries and responses
+    • Priority: 0=None, 1=Low, 2=Medium, 3=High, 4=Urgent
+    
+For more info: https://linear.app/docs/api
+"""
+    print(help_text)
+
+def main():
+    # Handle help first, before any initialization
+    if len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h", "help"]:
+        print_help()
+        sys.exit(0)
+    
+    if len(sys.argv) < 2:
+        print_help()
         sys.exit(1)
     
     # Check for debug flag
@@ -789,6 +1013,47 @@ Environment variables:
                     print(prefix)
             except Exception as e:
                 print(f"❌ Error getting prefix: {e}")
+                sys.exit(1)
+        
+        elif command == "discover":
+            try:
+                data = saber.discover_teams()
+                print("🔍 Your Linear Teams:")
+                print("=" * 50)
+                
+                if "viewer" in data and data["viewer"]:
+                    print(f"👤 User: {data['viewer']['name']} ({data['viewer']['email']})")
+                    print()
+                    
+                    user_teams = data["viewer"].get("teams", {}).get("nodes", [])
+                    if user_teams:
+                        print("📋 Teams you belong to:")
+                        for team in user_teams:
+                            print(f"  🏷️  Name: {team['name']}")
+                            print(f"     Key: {team['key']}")
+                            print(f"     ID: {team['id']}")
+                            if team['id'] == saber.team_id:
+                                print(f"     ⭐ CURRENT TEAM")
+                            print()
+                    else:
+                        print("❌ No teams found for your user")
+                
+                all_teams = data.get("teams", {}).get("nodes", [])
+                if all_teams and len(all_teams) > len(user_teams):
+                    print("🌐 All accessible teams:")
+                    for team in all_teams:
+                        if team['id'] not in [t['id'] for t in user_teams]:
+                            print(f"  🏷️  Name: {team['name']}")
+                            print(f"     Key: {team['key']}")
+                            print(f"     ID: {team['id']}")
+                            if team.get("description"):
+                                print(f"     Description: {team['description']}")
+                            print()
+                            
+                print(f"💾 Current team ID: {saber.team_id}")
+                            
+            except Exception as e:
+                print(f"❌ Error discovering teams: {e}")
                 sys.exit(1)
         
         else:

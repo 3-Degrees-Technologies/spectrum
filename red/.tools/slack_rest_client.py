@@ -22,78 +22,41 @@ class SlackRESTClient:
     
     def _discover_running_daemon(self) -> str:
         """
-        Calculate the daemon port using the same hash-based logic as puente.py
-        This ensures we connect to the correct port deterministically
+        Read the daemon port from the server's port file
+        This ensures we connect to the actual port the server is using
         """
-        import hashlib
-        import socket
+        import os
+        from pathlib import Path
         
-        # PRODUCTION PORT CONFIGURATION
-        # Port ranges are used to isolate different environments and allow multiple instances
-        # 
-        # PRODUCTION RANGE: 19842-19941 (100 ports)
-        #   - Used for live/production puente instances  
-        #   - Located in: puente/ directory
-        #   - Wider range supports more concurrent projects
-        #
-        # TEST RANGE: 19950-19999 (50 ports) 
-        #   - Used for development/testing puente instances
-        #   - Located in: puenteserver/, puenteclient/ directories
-        #   - Isolated from production to prevent conflicts
-        #
-        # Port Selection Logic:
-        #   1. Hash project directory path (ensures consistency across server/client)
-        #   2. Calculate offset: hash % PORT_RANGE_SIZE  
-        #   3. Final port: BASE_PORT + offset
-        #   4. Client connects ONLY to calculated port (no fallbacks)
+        # Client runs from puente/client, so server's .puente directory is ../../
+        current_path = Path(os.getcwd())
+        port_file_path = current_path.parent / 'port'
         
-        BASE_PORT = 19842  # PRODUCTION range start
-        PORT_RANGE_SIZE = 100  # PRODUCTION range: 19842-19941 (100 slots)
-        
-        def get_project_port(project_path: str) -> int:
-            """Derive consistent port from project path hash (same as puente.py)"""
-            path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()
-            hash_int = int(path_hash[:8], 16)
-            port_offset = hash_int % PORT_RANGE_SIZE
-            return BASE_PORT + port_offset
-        
-        def is_port_available(port: int) -> bool:
-            """Check if a port has a service running"""
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                    sock.settimeout(0.1)
-                    result = sock.connect_ex(('127.0.0.1', port))
-                    return result == 0  # 0 means connection successful (port occupied)
-            except OSError:
-                return False
-        def get_project_root(current_path: str) -> str:
-            """Find the project root directory for consistent port calculation"""
-            from pathlib import Path
-            path = Path(current_path).resolve()
+        try:
+            with open(port_file_path, 'r') as f:
+                port = int(f.read().strip())
             
-            # Use parent directory for consistent port calculation across projects
-            return str(path.parent)
-        
-        # Get project root directory for consistent port calculation
-        project_path = get_project_root(os.getcwd())
-        
-        # Calculate hash-based port first
-        derived_port = get_project_port(project_path)
-        test_url = f"http://127.0.0.1:{derived_port}"
-        
-        # Test ONLY the calculated port - no fallbacks
-        if is_port_available(derived_port):
+            # Verify the server is actually running on this port
+            import requests
+            test_url = f"http://127.0.0.1:{port}"
             try:
                 response = requests.get(f"{test_url}/health", timeout=1)
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("success") and "agents" in data.get("result", {}):
                         return test_url
-            except Exception as e:
-                raise ConnectionError(f"Daemon found on expected port {derived_port} but health check failed: {e}")
+                else:
+                    raise ConnectionError(f"Server on port {port} returned status {response.status_code}")
+            except requests.RequestException as e:
+                raise ConnectionError(f"Cannot connect to server on port {port}: {e}")
+                
+        except FileNotFoundError:
+            raise ConnectionError(f"Port file not found: {port_file_path}. Make sure the puente server is running.")
+        except (ValueError, OSError) as e:
+            raise ConnectionError(f"Error reading port file {port_file_path}: {e}")
         
-        # Fatal error if daemon not found on expected port
-        raise ConnectionError(f"No daemon found on expected port {derived_port} (calculated from path: {project_path})")
+        # This should never be reached due to the exceptions above
+        raise ConnectionError("Unknown error in daemon discovery")
     
     def _detect_agent_color(self) -> str:
         """
@@ -430,8 +393,8 @@ class SlackRESTClient:
             return str(path.parent)
         
         # Calculate expected port using same logic as _discover_running_daemon
-        BASE_PORT = 19950
-        PORT_RANGE_SIZE = 50
+        BASE_PORT = 19842
+        PORT_RANGE_SIZE = 1000
         # Get project root directory for consistent port calculation
         project_path = get_project_root(os.getcwd())
         path_hash = hashlib.md5(str(project_path).encode('utf-8')).hexdigest()

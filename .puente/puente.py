@@ -487,7 +487,7 @@ class HTTPServer:
         #   4. If unavailable, scan range for next free port
         
         BASE_PORT = 19842  # PRODUCTION range start
-        PORT_RANGE_SIZE = 100  # PRODUCTION range: 19842-19941 (100 slots)
+        PORT_RANGE_SIZE = 1000  # PRODUCTION range: 19842-20841 (1000 slots)
         MAX_PORT = BASE_PORT + PORT_RANGE_SIZE - 1
         
         def get_project_port(project_path: str) -> int:
@@ -506,22 +506,29 @@ class HTTPServer:
             except OSError:
                 return False
         
-        # Get project root directory for consistent port calculation  
-        # Server runs from .puente/ so current directory IS the parent we want to hash
+        # Get project root directory for port calculation
         project_path = os.getcwd()
         
-        # Try hash-based port first
+        # Try hash-based port first, then increment until free port found
         derived_port = get_project_port(project_path)
-        if is_port_available(derived_port):
-            return derived_port
         
-        # Fallback: scan for next available port in range
-        for port in range(BASE_PORT, MAX_PORT + 1):
-            if is_port_available(port):
-                return port
+        # Find first available port starting from derived port
+        port = derived_port
+        while not is_port_available(port):
+            port += 1
+            # Safety check to prevent infinite loop
+            if port > BASE_PORT + PORT_RANGE_SIZE:
+                raise RuntimeError(f"Cannot find available port in range {BASE_PORT}-{BASE_PORT + PORT_RANGE_SIZE}")
         
-        # Final fallback: return base port (may fail later but maintains compatibility)
-        return BASE_PORT
+        # Write the actual port to .puente/port file for client discovery
+        port_file_path = os.path.join(os.getcwd(), 'port')
+        try:
+            with open(port_file_path, 'w') as f:
+                f.write(str(port))
+        except Exception as e:
+            raise RuntimeError(f"Failed to write port file {port_file_path}: {e}")
+            
+        return port
         
     async def start(self):
         """Start HTTP server"""

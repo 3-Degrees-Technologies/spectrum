@@ -12,7 +12,7 @@ The Spectrum development framework now supports a **two-phase ticket workflow** 
 ### Phase 1: Discovery
 
 ```bash
-.spectrum-dev/spectrum-dev discover-ticket
+.tools/spectrum-dev discover-ticket
 ```
 
 **What it does:**
@@ -46,7 +46,7 @@ The Spectrum development framework now supports a **two-phase ticket workflow** 
 ### Phase 2: Implementation (Clean Context)
 
 ```bash
-.spectrum-dev/spectrum-dev start-ticket
+.tools/spectrum-dev start-ticket
 ```
 
 **What it does:**
@@ -81,25 +81,25 @@ The Spectrum development framework now supports a **two-phase ticket workflow** 
 
 ```bash
 # Phase 1: Discovery (context can be cluttered)
-.spectrum-dev/spectrum-dev discover-ticket
+.tools/spectrum-dev discover-ticket
 # AI agent runs MCP tools, extracts ticket data
 
 # Context Reset
 /compact
 
 # Phase 2: Clean Implementation
-.spectrum-dev/spectrum-dev start-ticket
+.tools/spectrum-dev start-ticket
 # Reads discovery data, sets up workspace
 
 # Continue with TDD development
-.spectrum-dev/spectrum-dev tdd-red "should validate input"
-.spectrum-dev/spectrum-dev tdd-green
-.spectrum-dev/spectrum-dev tdd-commit "Add input validation"
+.tools/spectrum-dev tdd-red "should validate input"
+.tools/spectrum-dev tdd-green
+.tools/spectrum-dev tdd-commit "Add input validation"
 
 # PR workflow
-.spectrum-dev/spectrum-dev pr-ready
-.spectrum-dev/spectrum-dev pr-monitor
-.spectrum-dev/spectrum-dev pr-cleanup
+.tools/spectrum-dev pr-ready
+.tools/spectrum-dev pr-monitor
+.tools/spectrum-dev pr-cleanup
 ```
 
 ## Legacy Support

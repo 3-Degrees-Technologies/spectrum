@@ -4,7 +4,19 @@
 # Purpose: Read ticket info from discover-ticket, set up workspace, begin focused implementation
 
 # Configuration
-TICKET_INFO_FILE="./tmp/spectrum-ticket-info.json"
+# Use project-specific tmp directory to avoid team collisions
+# Try to auto-detect project code from existing ticket info
+if [[ -f "/tmp/SPE/spectrum-ticket-info.json" ]]; then
+    PROJECT_CODE="SPE"
+elif [[ -f "/tmp/CEN/spectrum-ticket-info.json" ]]; then
+    PROJECT_CODE="CEN"
+else
+    # Default fallback - could be enhanced to scan multiple directories
+    PROJECT_CODE="SPE"
+fi
+
+SPECTRUM_TMP_DIR="/tmp/$PROJECT_CODE"
+TICKET_INFO_FILE="$SPECTRUM_TMP_DIR/spectrum-ticket-info.json"
 
 # Colors and emoji
 RED='\033[0;31m'
@@ -98,38 +110,44 @@ ticket_doc_path="$domain_folder/$ticket_id-$clean_title.md"
 cp "$downloaded_file" "$ticket_doc_path"
 echo -e "${SUCCESS} Created complete ticket documentation: $ticket_doc_path"
 
-# Step 3: Create feature branch
-echo -e "\n${BRANCH} Step 3: Creating feature branch..."
+# Step 3: Create feature branch from latest dev
+echo -e "\n${BRANCH} Step 3: Creating feature branch from latest dev..."
 
-# Ensure we're on main/master branch or detect default branch
+# Always branch from dev to prevent sync issues
+target_branch="dev"
 current_branch=$(git branch --show-current)
-default_branch=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5 2>/dev/null || echo "main")
 
-if [[ "$current_branch" != "$default_branch" ]]; then
-    echo -e "${WORKING} Switching to $default_branch branch..."
-    git checkout "$default_branch" || {
-        echo -e "${ERROR} Failed to checkout $default_branch branch"
-        echo -e "${INFO} Trying alternative default branches..."
-        
-        # Try common default branch names
-        for branch in main master dev develop; do
-            if git show-ref --verify --quiet "refs/heads/$branch"; then
-                echo -e "${WORKING} Switching to $branch branch..."
-                git checkout "$branch" && default_branch="$branch" && break
-            fi
-        done
-        
-        if [[ "$(git branch --show-current)" == "$current_branch" ]]; then
-            echo -e "${ERROR} Could not find suitable base branch"
+# Check if dev branch exists locally
+if ! git show-ref --verify --quiet "refs/heads/$target_branch"; then
+    echo -e "${ERROR} Local '$target_branch' branch not found"
+    echo -e "${INFO} Checking if remote dev branch exists..."
+    if git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
+        echo -e "${WORKING} Creating local '$target_branch' branch from remote..."
+        git checkout -b "$target_branch" "origin/$target_branch" || {
+            echo -e "${ERROR} Failed to create local dev branch from remote"
             exit 1
-        fi
+        }
+    else
+        echo -e "${ERROR} No dev branch found locally or on remote"
+        echo -e "${INFO} Please ensure dev branch exists before creating feature branches"
+        exit 1
+    fi
+fi
+
+# Switch to dev branch if not already on it
+if [[ "$current_branch" != "$target_branch" ]]; then
+    echo -e "${WORKING} Switching to $target_branch branch..."
+    git checkout "$target_branch" || {
+        echo -e "${ERROR} Failed to checkout $target_branch branch"
+        exit 1
     }
 fi
 
-# Pull latest from default branch
-echo -e "${WORKING} Pulling latest $default_branch branch..."
-git pull origin "$default_branch" || {
-    echo -e "${ERROR} Failed to pull latest $default_branch"
+# Pull latest from dev branch to ensure we have the most recent changes
+echo -e "${WORKING} Pulling latest changes from origin/$target_branch..."
+git pull origin "$target_branch" || {
+    echo -e "${ERROR} Failed to pull latest $target_branch"
+    echo -e "${INFO} Please check your network connection and remote access"
     exit 1
 }
 
@@ -141,7 +159,7 @@ git checkout -b "$branch_name" || {
     exit 1
 }
 
-echo -e "${SUCCESS} Created and switched to feature branch: $branch_name"
+echo -e "${SUCCESS} Created and switched to feature branch: $branch_name (based on latest $target_branch)"
 
 # Step 4: Save workflow state
 echo -e "\n${SAVE} Step 4: Saving workflow state..."
@@ -180,7 +198,7 @@ echo "  3. Use TDD approach if applicable: write tests first, then implementatio
 echo "  4. Commit work regularly and push feature branch when ready"
 
 # Clean up temp file if it was in temp location
-if [[ "$downloaded_file" =~ ^(/tmp|./tmp) ]]; then
+if [[ "$downloaded_file" =~ ^(/tmp|./tmp|$HOME/tmp|/tmp/[A-Z]+) ]]; then
     echo -e "${INFO} Cleaning up temporary file: $downloaded_file"
     rm -f "$downloaded_file"
 fi

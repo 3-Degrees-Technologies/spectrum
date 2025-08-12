@@ -139,6 +139,42 @@ echo "  ✅ Build: Successful compilation"
 echo "  ✅ Tests: All tests passing ($test_passed/$test_total)"
 echo "  ✅ Style: Code properly formatted"
 
+# Dev Branch Sync Check
+echo -e "\n${WORKING} Checking if branch is up to date with dev..."
+
+# Fetch latest from origin to get current dev state
+git fetch origin dev:refs/remotes/origin/dev 2>/dev/null || {
+    echo -e "${ERROR} Failed to fetch latest dev branch"
+    echo -e "${INFO} Check network connection and try again"
+    exit 1
+}
+
+# Check if current branch is behind origin/dev
+merge_base=$(git merge-base HEAD origin/dev)
+dev_head=$(git rev-parse origin/dev)
+
+if [[ "$merge_base" != "$dev_head" ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: Branch is behind origin/dev${NC}"
+    echo ""
+    echo -e "${YELLOW}Your branch is not up to date with the latest dev branch.${NC}"
+    echo -e "${INFO} This could cause merge conflicts or duplicate changes in the PR."
+    echo ""
+    echo -e "${INFO} ${YELLOW}To fix this issue:${NC}"
+    echo "  1. Switch to dev: ${BLUE}git checkout dev${NC}"
+    echo "  2. Pull latest: ${BLUE}git pull origin dev${NC}" 
+    echo "  3. Switch back: ${BLUE}git checkout $branch${NC}"
+    echo "  4. Rebase on dev: ${BLUE}git rebase dev${NC}"
+    echo "  5. Rerun pr-ready: ${BLUE}./.spectrum-dev/spectrum-dev pr-ready${NC}"
+    echo ""
+    echo -e "${INFO} Alternatively, merge dev into your branch:"
+    echo "  1. Merge dev: ${BLUE}git merge origin/dev${NC}"
+    echo "  2. Resolve any conflicts if they occur"
+    echo "  3. Rerun pr-ready: ${BLUE}./.spectrum-dev/spectrum-dev pr-ready${NC}"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Branch is up to date with dev"
+
 # Git Status Check
 echo -e "\n${WORKING} Checking git status..."
 git_status=$(git status --porcelain)

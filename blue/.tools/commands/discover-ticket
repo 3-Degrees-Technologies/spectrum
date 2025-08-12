@@ -4,10 +4,13 @@
 # Purpose: Extract ticket details from Slack, prepare temp file, set up for context reset
 
 # Configuration
-TICKET_INFO_FILE="./tmp/spectrum-ticket-info.json"
+# Use project-specific tmp directory to avoid team collisions
+PROJECT_CODE="SPE"  # TODO: Auto-detect from repo or ticket patterns
+SPECTRUM_TMP_DIR="/tmp/$PROJECT_CODE"
+TICKET_INFO_FILE="$SPECTRUM_TMP_DIR/spectrum-ticket-info.json"
 
-# Ensure tmp directory exists
-mkdir -p ./tmp
+# Ensure project-specific tmp directory exists
+mkdir -p "$SPECTRUM_TMP_DIR"
 
 # Colors and emoji
 RED='\033[0;31m'
@@ -46,21 +49,21 @@ echo ""
 
 # Get recent Slack messages
 echo -e "${WORKING} Checking Slack for ticket assignments..."
-python3 .tools/slack_rest_client.py get_relevant_messages 10 > ./tmp/slack_messages.json
+python3 .tools/slack_rest_client.py get_relevant_messages 10 > "$SPECTRUM_TMP_DIR/slack_messages.json"
 
-if [[ ! -s ./tmp/slack_messages.json ]]; then
+if [[ ! -s "$SPECTRUM_TMP_DIR/slack_messages.json" ]]; then
     echo -e "${ERROR} Failed to fetch Slack messages"
     exit 1
 fi
 
 # Parse messages for ticket assignments - prioritize newest first
 echo -e "${WORKING} Searching for ticket assignments..."
-ticket_assignment=$(jq -r '.result.messages[] | select(.text | test("[A-Z]+-[0-9]+")) | select(.text | test("assigned|Assignment|assignment|ready for.*implementation|ready for.*work|In Progress.*ready"; "i")) | .text' ./tmp/slack_messages.json 2>/dev/null | head -n 1)
+ticket_assignment=$(jq -r '.result.messages[] | select(.text | test("[A-Z]+-[0-9]+")) | select(.text | test("assigned|Assignment|assignment|ready for.*implementation|ready for.*work|In Progress.*ready"; "i")) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
 
 if [[ -z "$ticket_assignment" || "$ticket_assignment" == "null" ]]; then
     echo -e "${ERROR} No ticket assignment found in recent messages"
     echo -e "${INFO} Recent messages summary:"
-    jq -r '.result.messages[]? | "  " + .user_name + ": " + (.text | .[0:100])' ./tmp/slack_messages.json 2>/dev/null || echo "  No messages found"
+    jq -r '.result.messages[]? | "  " + .user_name + ": " + (.text | .[0:100])' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null || echo "  No messages found"
     echo ""
     echo -e "${INFO} Waiting for ticket assignment from Agent-Green..."
     exit 1
@@ -72,6 +75,22 @@ echo ""
 
 # Extract ticket ID and title
 ticket_id=$(echo "$ticket_assignment" | grep -oE '[A-Z]+-[0-9]+' | head -n 1)
+detected_project_code=$(echo "$ticket_id" | cut -d'-' -f1)
+
+# Update tmp directory based on detected project code
+if [[ -n "$detected_project_code" && "$detected_project_code" != "$PROJECT_CODE" ]]; then
+    echo -e "${INFO} Detected project code: ${BLUE}$detected_project_code${NC}"
+    PROJECT_CODE="$detected_project_code"
+    SPECTRUM_TMP_DIR="/tmp/$PROJECT_CODE"
+    TICKET_INFO_FILE="$SPECTRUM_TMP_DIR/spectrum-ticket-info.json"
+    mkdir -p "$SPECTRUM_TMP_DIR"
+    
+    # Move files to correct project directory
+    if [[ -f "/tmp/SPE/slack_messages.json" ]]; then
+        mv "/tmp/SPE/slack_messages.json" "$SPECTRUM_TMP_DIR/"
+    fi
+fi
+
 ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*\([A-Z]\+-[0-9]\+\)[^:]*: *\(.*\)/\2/p' | head -n 1)
 
 if [[ -z "$ticket_title" ]]; then
@@ -91,9 +110,9 @@ echo ""
 
 # Check for file attachments in the messages
 echo -e "${WORKING} Checking for ticket detail files..."
-attachment_found=$(jq -r '.result.messages[] | select(.files and (.files | length > 0)) | .files[0].id // empty' ./tmp/slack_messages.json 2>/dev/null | head -n 1)
+attachment_found=$(jq -r '.result.messages[] | select(.files and (.files | length > 0)) | .files[0].id // empty' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
 
-ticket_file_path="./tmp/discovered-ticket-details.md"
+ticket_file_path="$SPECTRUM_TMP_DIR/discovered-ticket-details.md"
 
 if [[ -n "$attachment_found" && "$attachment_found" != "null" ]]; then
     echo -e "${DOWNLOAD} Downloading ticket details file..."
@@ -119,7 +138,7 @@ else
     echo "" >> "$ticket_file_path"
     
     # Add any detailed messages from Agent-Green
-    jq -r '.result.messages[] | select(.user_name == "{AGENT_GREEN}") | select(.text | length > 200) | .text' ./tmp/slack_messages.json 2>/dev/null >> "$ticket_file_path"
+    jq -r '.result.messages[] | select(.user_name == "Agent-Knowledge") | select(.text | length > 200) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null >> "$ticket_file_path"
 fi
 
 # Determine ticket type
@@ -148,7 +167,7 @@ echo -e "${SUCCESS} Created ticket info file: $TICKET_INFO_FILE"
 echo ""
 
 # Clean up temp files
-rm -f ./tmp/slack_messages.json
+rm -f "$SPECTRUM_TMP_DIR/slack_messages.json"
 
 # Validate that discovery was completed
 if [[ ! -f "$TICKET_INFO_FILE" ]]; then

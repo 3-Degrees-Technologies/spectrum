@@ -4,18 +4,8 @@
 # Purpose: Read ticket info from discover-ticket, set up workspace, begin focused implementation
 
 # Configuration
-# Use project-specific tmp directory to avoid team collisions
-# Try to auto-detect project code from existing ticket info
-if [[ -f "/tmp/SPE/spectrum-ticket-info.json" ]]; then
-    PROJECT_CODE="SPE"
-elif [[ -f "/tmp/CEN/spectrum-ticket-info.json" ]]; then
-    PROJECT_CODE="CEN"
-else
-    # Default fallback - could be enhanced to scan multiple directories
-    PROJECT_CODE="SPE"
-fi
-
-SPECTRUM_TMP_DIR="/tmp/$PROJECT_CODE"
+# Use project-local tmp directory
+SPECTRUM_TMP_DIR=".tmp"
 TICKET_INFO_FILE="$SPECTRUM_TMP_DIR/spectrum-ticket-info.json"
 
 # Colors and emoji
@@ -164,8 +154,8 @@ echo -e "${SUCCESS} Created and switched to feature branch: $branch_name (based 
 # Step 4: Save workflow state
 echo -e "\n${SAVE} Step 4: Saving workflow state..."
 
-mkdir -p .spectrum
-cat > .spectrum/current-ticket.json << EOF
+mkdir -p .tmp
+cat > .tmp/current-ticket.json << EOF
 {
   "ticket": "$ticket_id",
   "title": "$ticket_title",
@@ -180,7 +170,7 @@ cat > .spectrum/current-ticket.json << EOF
 }
 EOF
 
-echo -e "${SUCCESS} Workflow state saved to .spectrum/current-ticket.json"
+echo -e "${SUCCESS} Workflow state saved to .tmp/current-ticket.json"
 
 # Summary and next steps
 echo -e "\n${SUCCESS} Ticket workflow initialized successfully!"
@@ -198,7 +188,7 @@ echo "  3. Use TDD approach if applicable: write tests first, then implementatio
 echo "  4. Commit work regularly and push feature branch when ready"
 
 # Clean up temp file if it was in temp location
-if [[ "$downloaded_file" =~ ^(/tmp|./tmp|$HOME/tmp|/tmp/[A-Z]+) ]]; then
+if [[ "$downloaded_file" =~ ^(.tmp|/tmp|./tmp|$HOME/tmp) ]]; then
     echo -e "${INFO} Cleaning up temporary file: $downloaded_file"
     rm -f "$downloaded_file"
 fi

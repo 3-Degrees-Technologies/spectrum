@@ -25,6 +25,51 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def convert_markdown_to_slack(text: str) -> str:
+    """
+    Convert markdown formatting to Slack formatting
+    **bold** -> *bold*
+    *italic* -> _italic_ 
+    `code` -> `code` (unchanged)
+    ```code block``` -> ```code block``` (unchanged)
+    """
+    import re
+    
+    # First, temporarily replace **bold** with a placeholder to avoid conflicts
+    # Step 1: **bold** -> BOLD_PLACEHOLDER
+    bold_patterns = []
+    def store_bold(match):
+        bold_patterns.append(match.group(1))
+        return f"__BOLD_PLACEHOLDER_{len(bold_patterns)-1}__"
+    
+    text = re.sub(r'\*\*(.+?)\*\*', store_bold, text)
+    
+    # Step 2: *italic* -> _italic_ (now safe from **bold** interference)
+    text = re.sub(r'\*([^*]+?)\*', r'_\1_', text)
+    
+    # Step 3: Restore **bold** as *bold*
+    for i, bold_content in enumerate(bold_patterns):
+        text = text.replace(f"__BOLD_PLACEHOLDER_{i}__", f"*{bold_content}*")
+    
+    return text
+
+def convert_slack_to_markdown(text: str) -> str:
+    """
+    Convert Slack formatting to markdown formatting (reverse conversion)
+    *bold* -> **bold**
+    _italic_ -> *italic*
+    `code` -> `code` (unchanged)
+    """
+    import re
+    
+    # Convert *bold* to **bold**
+    text = re.sub(r'\*([^*]+?)\*', r'**\1**', text)
+    
+    # Convert _italic_ to *italic*
+    text = re.sub(r'_([^_]+?)_', r'*\1*', text)
+    
+    return text
+
 def replace_agent_mentions(text: str, agent_configs: Dict) -> str:
     """
     Replace @agent-name mentions with proper Slack user ID mentions
@@ -978,6 +1023,13 @@ class SlackDaemon:
                 
                 if text != original_text:
                     logger.info(f"Replaced mentions in message: {original_text[:50]}... -> {text[:50]}...")
+                
+                # Convert markdown formatting to Slack formatting
+                markdown_converted_text = text
+                text = convert_markdown_to_slack(text)
+                
+                if text != markdown_converted_text:
+                    logger.info(f"Converted markdown formatting: {markdown_converted_text[:50]}... -> {text[:50]}...")
                 
                 logger.info(f"Sending message to {channel} as {agent_identifier}: {text[:50]}...")
                 

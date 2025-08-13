@@ -139,17 +139,21 @@ You have been assigned: **${ticket_title}**
 
 Ticket is now **In Progress** and ready for work. Full details attached."
 
-# Note: Agent-Knowledge must send both message and attachment
-echo -e "${INFO} ${YELLOW}Agent-Knowledge must send Slack notification with attachment:${NC}"
-echo ""
-echo -e "${BLUE}=== MESSAGE TO SEND ===${NC}"
-echo "$assignment_msg"
-echo -e "${BLUE}=========================${NC}"
-echo ""
-echo -e "${BLUE}=== ATTACHMENT TO UPLOAD ===${NC}"
-echo -e "${INFO} File: ${ticket_filepath}"
-echo -e "${INFO} Use: python3 .tools/slack_rest_client.py upload_file ${ticket_filepath} \"${TICKET_ID} ticket details\""
-echo -e "${BLUE}===========================${NC}"
+# Send Slack notification with attachment
+echo -e "${WORKING} Sending Slack notification with attachment..."
+
+# Send file with assignment message as comment (combines message + attachment)
+slack_result=$(python3 .tools/slack_rest_client.py upload_file "$ticket_filepath" "$assignment_msg" 2>/dev/null)
+slack_status=$?
+
+if [ $slack_status -eq 0 ]; then
+    echo -e "${SUCCESS} Slack notification sent with attachment"
+else
+    echo -e "${ERROR} Failed to send Slack notification"
+    echo -e "${INFO} Manual steps required:"
+    echo -e "${INFO} Message: $assignment_msg"
+    echo -e "${INFO} Attachment: $ticket_filepath"
+fi
 
 # Step 5: Assignment confirmation
 echo ""

@@ -106,8 +106,10 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
     user_id_pattern = f"<@{bot_user_id}>" if bot_user_id else None
     
     # Legacy: Support old text-based patterns for backwards compatibility
+    # Make patterns more specific to avoid false matches
     agent_patterns = [
-        f"@{agent_identifier.lower()}",     # @red or @agent-sam
+        f"@{agent_identifier.lower()}:",    # @red: or @agent-sam:
+        f"@{agent_identifier.lower()} ",    # @red or @agent-sam followed by space
         f"[{agent_identifier.lower()}]",    # [red] or [agent-sam]
         f"{agent_identifier.lower()}:"      # red: or agent-sam:
     ]
@@ -115,6 +117,7 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
     for msg in messages:
         text = msg.get("text", "")
         text_lower = text.lower()
+        user_id = msg.get("user_id", "")
         
         # Check if this specific agent has already reacted to this message
         if exclude_reacted and bot_user_id:
@@ -131,17 +134,46 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
                 continue
         
         # Check for team-wide alerts first
-        if any(keyword.lower() in text_lower for keyword in team_keywords):
+        team_match = any(keyword.lower() in text_lower for keyword in team_keywords)
+        if team_match:
             relevant.append(msg)
             continue
             
         # Check for proper Slack user ID mentions first (preferred)
-        if user_id_pattern and user_id_pattern in text:
+        user_id_match = user_id_pattern and user_id_pattern in text
+        if user_id_match:
             relevant.append(msg)
             continue
             
-        # Fallback: Check for legacy text-based patterns
-        if any(pattern in text_lower for pattern in agent_patterns):
+        # Check for agent's own messages (messages from the same bot)
+        own_message = msg.get("user_id") == bot_user_id
+        if own_message:
+            relevant.append(msg)
+            continue
+            
+        # Fallback: Check for legacy text-based patterns (more specific matching)
+        message_matched = False
+        for pattern in agent_patterns:
+            if pattern in text_lower:
+                # Additional validation: make sure this isn't part of another agent's name
+                if pattern.startswith('@'):
+                    # For @agent patterns, ensure it's not part of a longer agent name
+                    pattern_pos = text_lower.find(pattern)
+                    if pattern_pos >= 0:
+                        # Check what comes after the pattern
+                        after_pattern_pos = pattern_pos + len(pattern)
+                        if after_pattern_pos < len(text_lower):
+                            next_char = text_lower[after_pattern_pos]
+                            # If followed by a letter/digit, it might be part of another agent name
+                            if next_char.isalnum() or next_char == '-':
+                                continue  # Skip this pattern, might be false positive
+                        message_matched = True
+                        break
+                else:
+                    message_matched = True
+                    break
+                    
+        if message_matched:
             relevant.append(msg)
             
     return relevant
@@ -1162,6 +1194,22 @@ class SlackDaemon:
                 comment = params.get("comment", "")
                 channel = params.get("channel", self.default_channel)
                 agent_identifier = params.get("agent_color") or params.get("agent_name")
+                
+                # Apply the same transformations as send_message for the comment
+                if comment:
+                    # Replace @agent-name mentions with proper Slack user IDs
+                    original_comment = comment
+                    comment = replace_agent_mentions(comment, self.agent_configs)
+                    
+                    if comment != original_comment:
+                        logger.info(f"Replaced mentions in file comment: {original_comment[:50]}... -> {comment[:50]}...")
+                    
+                    # Convert markdown formatting to Slack formatting
+                    markdown_converted_comment = comment
+                    comment = convert_markdown_to_slack(comment)
+                    
+                    if comment != markdown_converted_comment:
+                        logger.info(f"Converted markdown in file comment: {markdown_converted_comment[:50]}... -> {comment[:50]}...")
                 
                 if not file_data:
                     raise ValueError("No file data provided")

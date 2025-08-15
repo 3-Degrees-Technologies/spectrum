@@ -18,8 +18,8 @@ CYCLE="🔄"
 test_description="$1"
 
 if [[ -z "$test_description" ]]; then
-    echo -e "${ERROR} Usage: ./.spectrum-dev/spectrum-dev tdd-red 'test description'"
-    echo "Example: ./.spectrum-dev/spectrum-dev tdd-red 'should return balance for valid account'"
+    echo -e "${ERROR} Usage: ./.tools/commands/tdd-red 'test description'"
+    echo "Example: ./.tools/commands/tdd-red 'should return balance for valid account'"
     exit 1
 fi
 
@@ -27,14 +27,14 @@ echo -e "${TEST} ${RED}TDD RED CYCLE${NC}: Writing failing test"
 echo -e "${INFO} Test: $test_description"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+if [[ ! -f ".tmp/current-ticket.json" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
-    echo -e "${INFO} Please run './.spectrum-dev/spectrum-dev start-ticket' first"
+    echo -e "${INFO} Please run './.tools/commands/start-ticket' first"
     exit 1
 fi
 
 # Load current ticket context
-ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_info=$(cat .tmp/current-ticket.json)
 ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
 domain=$(echo "$ticket_info" | jq -r '.domain')
 current_phase=$(echo "$ticket_info" | jq -r '.phase')
@@ -140,8 +140,8 @@ jq '.phase = "red-confirmed" | .confirmed = true | .confirmed_at = now | .confir
 mv "$tdd_state_file.tmp" "$tdd_state_file"
 
 # Update ticket state
-jq --arg phase "tdd-red-cycle-$cycle_number" '.phase = $phase' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+jq --arg phase "tdd-red-cycle-$cycle_number" '.phase = $phase' .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
 
 echo -e "\n${SUCCESS} ${RED}TDD RED CYCLE COMPLETE${NC}"
 echo -e "${INFO} Summary:"
@@ -150,7 +150,7 @@ echo "  Test: $test_description"
 echo "  Status: ✅ Failing test confirmed"
 echo ""
 echo -e "${INFO} Next step:"
-echo -e "${GREEN}  Run: ./.spectrum-dev/spectrum-dev tdd-green${NC}"
+echo -e "${GREEN}  Run: ./.tools/commands/tdd-green${NC}"
 echo "  This will guide you through implementing minimal code to make the test pass"
 echo ""
 echo -e "${YELLOW} Remember: TDD discipline requires you implement ONLY enough code to make this test pass${NC}"

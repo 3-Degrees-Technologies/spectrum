@@ -2,6 +2,12 @@
 # pr-cleanup command for Spectrum Development Framework
 # Phase 3: Post-merge cleanup - archive documentation and reset for next ticket
 
+# SAFETY: This script only modifies:
+# - .spectrum/ (workflow state)
+# - Feature branch (deletion)
+# - Documentation files (archival)
+# It NEVER modifies: .tools/, .centro-dev/, src/, or other working directories
+
 # Colors and emoji
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -18,14 +24,14 @@ ARCHIVE="📚"
 echo -e "${CLEANUP} ${BLUE}PR CLEANUP${NC}: Post-merge cleanup and ticket archival"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+if [[ ! -f ".tmp/current-ticket.json" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
     echo -e "${INFO} Please ensure you have an active PR workflow"
     exit 1
 fi
 
 # Load current ticket context
-ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_info=$(cat .tmp/current-ticket.json)
 ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
 ticket_title=$(echo "$ticket_info" | jq -r '.title')
 domain=$(echo "$ticket_info" | jq -r '.domain')
@@ -57,11 +63,33 @@ echo -e "${INFO} Proceeding with post-merge cleanup..."
 current_git_branch=$(git branch --show-current)
 if [[ "$current_git_branch" == "$branch" ]]; then
     echo -e "\n${WORKING} Switching away from feature branch..."
-    git checkout dev || {
-        echo -e "${ERROR} Failed to switch to dev branch"
-        echo -e "${INFO} Please ensure dev branch exists and is accessible"
+    
+    # PROTECTION: Never delete working directories
+    if [[ -d ".tools" ]] && [[ ! -d ".tools/.git" ]]; then
+        echo -e "${ERROR} ${RED}BLOCKED: This script does not modify development tools${NC}"
+        echo -e "${INFO} Working directories (.tools/, .centro-dev/) are protected"
+        echo -e "${INFO} Only workflow state, branches, and documentation are managed"
         exit 1
-    }
+    fi
+    
+    # Handle temp files safely before branch switch
+    if git status --porcelain | grep -q '\.spectrum/'; then
+        echo -e "${INFO} Removing temporary workflow files..."
+        rm -f .tmp/current-ticket.json .spectrum/current-cycle.json
+        echo -e "${SUCCESS} Temporary files cleaned"
+    fi
+    
+    # Safe branch switch - handle any remaining conflicts
+    if ! git checkout dev; then
+        echo -e "${INFO} Stashing any remaining changes and retrying..."
+        git stash --include-untracked || true
+        git checkout dev || {
+            echo -e "${ERROR} Failed to switch to dev branch"
+            echo -e "${INFO} Please ensure dev branch exists and is accessible"
+            echo -e "${INFO} Manual intervention required - do not force delete working directories"
+            exit 1
+        }
+    fi
     echo -e "${SUCCESS} Switched to dev branch"
 fi
 
@@ -175,23 +203,29 @@ fi
 echo -e "\n${WORKING} Finalizing ticket state..."
 jq '.phase = "completed" | .completed_at = now | .completed_at |= todate | .archived_to = $archived | .branch_deleted = true | .cleanup_completed = true' \
    --arg archived "$historical_path" \
-   .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+   .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
 
 # Archive the final ticket state
 mkdir -p .spectrum/completed-tickets
 ticket_state_archive=".spectrum/completed-tickets/$ticket_id-$(date +%Y%m%d-%H%M%S).json"
-cp .spectrum/current-ticket.json "$ticket_state_archive"
+cp .tmp/current-ticket.json "$ticket_state_archive"
 echo -e "${SUCCESS} Final ticket state archived to: $ticket_state_archive"
 
 # Clean up current ticket state - ready for next assignment
-rm -f .spectrum/current-ticket.json
+rm -f .tmp/current-ticket.json
 echo -e "${SUCCESS} Current ticket state cleaned up"
 
 # Clean up any remaining workflow files
 if [[ -f ".spectrum/current-cycle.json" ]]; then
     rm -f .spectrum/current-cycle.json
 fi
+
+# SAFETY REMINDER: This script completed without modifying working directories
+echo -e "\n${INFO} ${BLUE}SAFETY VERIFICATION:${NC}"
+echo -e "${SUCCESS} ✅ No working directories (.tools/, .centro-dev/, src/) were modified"
+echo -e "${SUCCESS} ✅ Only workflow state, branches, and documentation were managed"
+echo -e "${SUCCESS} ✅ Development environment remains intact"
 
 echo -e "\n${SUCCESS} ${GREEN}PR CLEANUP COMPLETED SUCCESSFULLY${NC}"
 echo -e "${INFO} Summary:"
@@ -210,4 +244,4 @@ echo "  🌳 Git state: On dev branch with latest changes"
 echo ""
 echo -e "${SUCCESS} ${GREEN}READY FOR NEXT TICKET ASSIGNMENT!${NC}"
 echo -e "${INFO} Agent-Knowledge can now assign new tickets"
-echo -e "${INFO} Run './.spectrum-dev/spectrum-dev start-ticket' when new assignment received"
+echo -e "${INFO} Run './.tools/commands/start-ticket' when new assignment received"

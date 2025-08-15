@@ -1,127 +1,125 @@
-# Good Implementation Ticket Example
+# Good Implementation Ticket Examples
 
-## Example: Well-Structured Implementation Ticket
+## Example 1: Current pCloud Project - PREFERRED PATTERN
 
-**Title:** Implement JWT Token Validation Middleware
+### PLY-48: Username/Password Authentication Flow
 
-**Description:**
-Create middleware function that validates JWT tokens for API authentication.
+**Brief**: Implement direct username/password login to pCloud userinfo endpoint with getauth=1 parameter, handle successful auth token response
 
-## Objective
+**Why This is a GOOD Implementation Ticket:**
 
-Implement Express.js middleware that validates JWT tokens in the Authorization header, handles token expiration and invalid signatures, and provides appropriate error responses for protected routes.
+#### ✅ Single Domain Focus
+- All work is within pCloud authentication domain
+- Login + token response handling = single workflow  
+- Cohesive functionality that belongs together
 
-## Technical Requirements
+#### ✅ Single Feature Workflow
+- Step 1: Make API call to pCloud userinfo endpoint
+- Step 2: Process auth token from response
+- This is ONE authentication flow, not separate tasks
 
-**Core Functionality:**
-- Extract JWT token from Authorization header (Bearer format)
-- Validate token signature using configured secret key
-- Check token expiration timestamp
-- Decode user information from valid tokens
-- Attach user data to request object for downstream handlers
+#### ✅ Testing is Process, Not Task
+- TDD approach means tests are part of implementation methodology
+- "Write tests" is not a separate task - it's how we implement
+- Testing is integral to the development process
 
-**Error Handling:**
-- Return 401 for missing or malformed tokens
-- Return 401 for expired tokens  
-- Return 401 for invalid signatures
-- Return 500 for configuration errors
-- Provide descriptive error messages in response
+#### ✅ Error Handling is Domain Responsibility
+- Authentication errors belong in authentication domain
+- Handling login failures is part of login implementation
+- Not a separate concern, but core functionality
 
-**Integration Points:**
-- Integrate with existing Express.js application structure
-- Use existing JWT configuration from environment variables
-- Follow established error response format patterns
+#### ✅ Implementable Scope
+- Clear API endpoint and parameters specified
+- Specific success criteria (auth token handling)
+- Single developer can complete in focused session
 
-## Definition of Done
+### Validation False Positives to Ignore
 
-- [ ] Middleware function validates JWT tokens correctly
-- [ ] All error scenarios return appropriate HTTP status codes and messages
-- [ ] Valid tokens result in user data attached to request object
-- [ ] Unit tests cover all validation scenarios (valid, expired, invalid, missing tokens)
-- [ ] Integration with existing auth configuration works correctly
-- [ ] Code follows team's TypeScript and Express.js conventions
-- [ ] Documentation updated for middleware usage
+**❌ "Multiple Tasks" - Actually Single Workflow**
+- Validator sees "implement login" + "handle response"
+- Reality: This is one authentication workflow
 
-## Dependencies
+**❌ "Frontend+Backend Context" - Actually Network Operation**  
+- Client making API call involves networking
+- This is standard mobile app functionality, not context mixing
 
-- Existing JWT configuration setup
-- Express.js framework already configured
-- Authentication service provides JWT tokens
-
----
-
-## What Makes This Implementation Ticket Good
-
-### ✅ Single Task Focus
-- **One clear objective**: Implement JWT validation middleware
-- **Single technical context**: Express.js middleware development
-- **One-sentence summary**: "Create middleware that validates JWT tokens"
-
-### ✅ Implementation-Ready
-- **Implementation phase ticket**: No design work mixed in
-- **Specific technical details**: JWT validation, error handling, integration points
-- **Clear scope boundaries**: Just the middleware, not the broader auth system
-- **Ready to code**: Developer can start immediately with clear requirements
-
-### ✅ Clean Format
-- **No external references**: No CENTRO-XXX or other non-Linear IDs
-- **No priority in text**: Priority would be set in Linear field
-- **No story points**: Estimation not in description
-- **Clear structure**: Objective → Requirements → Definition of Done
-
-### ✅ Proper Definition of Done
-- **Specific and testable**: Each item can be verified
-- **Implementation-focused**: Code, tests, documentation
-- **No generic metrics**: No "response time <100ms" without context
-- **Complete scope**: Covers all aspects of the deliverable work
-
-### ✅ Context Without Complexity
-- **Sufficient detail**: Developer knows exactly what to build
-- **Clear dependencies**: What needs to exist first
-- **Integration guidance**: How it fits with existing system
-- **No over-specification**: Doesn't dictate exact implementation approach
-
-### ✅ Validation Against Quality Rules
-
-This ticket passes all validation tests:
-
-**Content Task Analysis**: ✅ 1 main task (implement JWT middleware)
-**One-Sentence Test**: ✅ "Create JWT validation middleware"  
-**Context Switching Detection**: ✅ Single context (Express.js middleware)
-**Phase Mixing Check**: ✅ Pure implementation, no design phase work
-
-## Comparison: Good vs Bad Implementation Tickets
-
-### ✅ Good Implementation Ticket (This Example)
-```
-Title: Implement JWT Token Validation Middleware
-Content: Single middleware function with clear requirements
-Focus: Pure implementation work ready to code
-```
-
-### ❌ Bad Implementation Ticket  
-```
-Title: Design and Implement Authentication System
-Content: Research auth patterns, design architecture, build login/logout/middleware/database
-Focus: Multiple phases and components mixed together
-```
-
-## When to Use This Pattern
-
-### ✅ **Good for Implementation Tickets:**
-- Single component or function
-- Clear technical requirements already defined
-- Specific coding task with known scope
-- Building on existing architecture/design
-- Well-understood integration points
-
-### ❌ **Should be Design Tickets Instead:**
-- New system architecture needed
-- Multiple components to coordinate
-- Unknown technical approaches
-- Research required before coding
-- Cross-system integration design
+**❌ "Testing Separate Task" - Actually TDD Process**
+- Tests are part of implementation approach
+- Not additional work, but how work gets done
 
 ---
 
-**Use this as the gold standard for implementation tickets moving forward.**
+## Example 2: Previous Pattern - STILL VALID
+
+### Implement JWT Token Validation Middleware
+
+**Description:** Create middleware function that validates JWT tokens for API authentication.
+
+**Why This Works:**
+- Single middleware component
+- Clear technical scope
+- Implementation-ready requirements
+- Pure implementation phase work
+
+---
+
+## Pattern: Good Implementation Tickets
+
+### ✅ **Characteristics:**
+1. **Single domain/feature area** (authentication, playback, file listing, etc.)
+2. **Complete workflow** (not partial functionality)  
+3. **Clear API/technical scope** (specific endpoints, parameters, responses)
+4. **Includes natural responsibilities** (error handling, validation within domain)
+5. **TDD methodology** (tests are process, not separate tasks)
+
+### ✅ **What to Include:**
+- Domain-specific error handling
+- Testing as part of TDD process  
+- Integration within same architectural layer
+- Natural workflow steps (API call → process response)
+
+### ❌ **What to Avoid:**
+- Multiple unrelated domains
+- Design + implementation mixing
+- Cross-system architecture decisions
+- Research or discovery work
+
+---
+
+## When to Override Validation Warnings
+
+### ✅ **Safe to Ignore These Warnings:**
+
+**"Multiple Tasks" when it's actually:**
+- Single workflow with natural steps
+- Domain functionality + error handling
+- API call + response processing
+- TDD tests + implementation
+
+**"Frontend+Backend Context" when it's actually:**
+- Network operations in mobile apps
+- API client functionality
+- Standard client-server patterns
+
+**"Testing as Separate Task" when:**
+- Following TDD methodology
+- Tests are part of development process
+- Not additional scope, but approach
+
+### ❌ **Do NOT Ignore These Warnings:**
+- Actual multiple unrelated domains
+- Design work mixed with implementation
+- Research + building in same ticket
+- Multiple system components
+
+---
+
+## Use These Examples When:
+
+- Validation warns about "multiple tasks" in single workflow
+- Validator flags testing as separate task (ignore - it's TDD)
+- Error handling within same domain triggers warnings (ignore)
+- Network operations flagged as "frontend+backend" (ignore - standard mobile)
+- Need to determine if ticket scope is appropriate
+
+**Remember**: Tickets should represent complete, implementable features within a single domain, not atomic function-level work.

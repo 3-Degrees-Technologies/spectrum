@@ -1,0 +1,240 @@
+#!/bin/bash
+# project_structure - Create Linear ticket structure from project documentation
+# Reads PROJECT_BRIEF.md and DOMAIN_ANALYSIS.md to create epic structure
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+CREATE="🎫"
+STRUCTURE="🏗️"
+
+# Usage check
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./project_structure --from-brief PROJECT_BRIEF.md [--prefix PLY]"
+    echo -e "${INFO} Example: ./project_structure --from-brief PROJECT_BRIEF.md --prefix PLY"
+    echo -e "${INFO} Creates Linear tickets based on domain analysis"
+    exit 1
+fi
+
+# Parse arguments
+brief_file=""
+ticket_prefix="PLY"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --from-brief)
+            brief_file="$2"
+            shift 2
+            ;;
+        --prefix)
+            ticket_prefix="$2"
+            shift 2
+            ;;
+        *)
+            echo -e "${ERROR} Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$brief_file" ]; then
+    echo -e "${ERROR} --from-brief PROJECT_BRIEF.md is required"
+    exit 1
+fi
+
+echo -e "${INFO} ${BLUE}Agent-Knowledge Project Structure Framework${NC}"
+echo -e "${STRUCTURE} Creating Linear structure from: ${brief_file}"
+echo ""
+
+# Check required files exist
+if [ ! -f "$brief_file" ]; then
+    echo -e "${ERROR} Project brief file not found: $brief_file"
+    exit 1
+fi
+
+if [ ! -f "DOMAIN_ANALYSIS.md" ]; then
+    echo -e "${ERROR} DOMAIN_ANALYSIS.md not found. Run project_discover first."
+    exit 1
+fi
+
+# Extract project name from brief
+project_name=$(grep "^**Project Name:**" "$brief_file" | sed 's/\*\*Project Name:\*\* //')
+if [ -z "$project_name" ]; then
+    echo -e "${ERROR} Could not extract project name from $brief_file"
+    exit 1
+fi
+
+echo -e "${INFO} Project: $project_name"
+echo -e "${INFO} Prefix: $ticket_prefix"
+echo ""
+
+# Step 1: Create project parent ticket
+echo -e "${STRUCTURE} Creating project structure..."
+echo -e "${CREATE} Creating project parent ticket..."
+
+project_description="# ${project_name}
+
+**Objective**
+Complete development of ${project_name} as defined in the project brief.
+
+**Project Overview**
+$(grep -A 20 "## Project Overview" "$brief_file" | tail -n +2 | sed '/^## /q' | sed '$d')
+
+**Success Criteria**
+$(grep -A 50 "## Success Criteria" "$brief_file" | tail -n +2 | sed '/^## /q' | sed '$d')
+
+**Project Structure**
+This project is organized into focused epic areas based on domain analysis:
+- Authentication System
+- Music Discovery Engine  
+- Audio Playback Engine
+- User Interface System
+- Background Services
+
+**Labels**
+project"
+
+# Create project ticket
+project_result=$(python3 .tools/saber.py create "$project_name" "$project_description" 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo -e "${ERROR} Failed to create project ticket"
+    exit 1
+fi
+
+# Extract project ticket ID
+project_ticket=$(echo "$project_result" | grep -oE "${ticket_prefix}-[0-9]+" | head -1)
+if [ -z "$project_ticket" ]; then
+    echo -e "${ERROR} Could not extract project ticket ID"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Created project ticket: ${project_ticket}"
+
+# Step 2: Create implementation parent ticket
+echo -e "${CREATE} Creating implementation parent ticket..."
+
+impl_description="# ${project_name} - Core Feature Development
+
+**Objective**
+Coordinate implementation of all core features for ${project_name}.
+
+**Context**
+This parent ticket coordinates development across all feature domains identified in the domain analysis.
+
+**Implementation Breakdown**
+The implementation is organized into focused epic areas:
+
+* Authentication System - OAuth, tokens, security
+* Music Discovery Engine - File scanning, metadata, library  
+* Audio Playback Engine - Streaming, controls, Media3
+* User Interface System - Material Design, Compose, UX
+* Background Services - Background playback, system integration
+
+**Success Criteria**
+* All epic areas completed successfully
+* Integration across domains validated
+* Full application functionality working end-to-end
+* Quality gates and testing complete
+
+**Labels**
+implementation"
+
+# Create implementation ticket
+impl_result=$(python3 .tools/saber.py create "${project_name} - Core Feature Development" "$impl_description" 2>/dev/null)
+impl_ticket=$(echo "$impl_result" | grep -oE "${ticket_prefix}-[0-9]+" | head -1)
+
+echo -e "${SUCCESS} Created implementation ticket: ${impl_ticket}"
+
+# Set parent relationship
+python3 .tools/saber.py parent "$impl_ticket" "$project_ticket" >/dev/null 2>&1
+
+# Step 3: Create epic tickets
+echo -e "${CREATE} Creating epic tickets..."
+
+declare -a epics=(
+    "Authentication System|Complete pCloud authentication integration including OAuth flow, token management, secure storage, and error handling|auth,integration,security"
+    "Music Discovery Engine|Browse pCloud storage, extract metadata, build searchable music library, and handle large music collections efficiently|discovery,data,integration"  
+    "Audio Playback Engine|Implement audio streaming from pCloud using Media3/ExoPlayer with playback controls and streaming optimization|playback,business-logic,integration"
+    "User Interface System|Create Material Design 3 interface with Jetpack Compose for music browsing, playback controls, and user experience|ui,business-logic"
+    "Background Services|Implement background audio playback, MediaSession integration, and Android system audio integration|background,background-service,integration"
+)
+
+epic_tickets=()
+
+for epic_def in "${epics[@]}"; do
+    IFS='|' read -r epic_name epic_desc epic_labels <<< "$epic_def"
+    
+    echo -e "${WORKING} Creating epic: ${epic_name}"
+    
+    epic_description="# ${epic_name}
+
+**Objective**  
+${epic_desc}
+
+**Context**
+Based on domain analysis, this epic encompasses a focused feature area that can be developed and tested independently while integrating with other system components.
+
+**Epic Scope**
+This epic will be broken down into focused implementation tickets through the validation-guided breakdown process.
+
+**Success Criteria**
+* All implementation tickets completed successfully
+* Feature area fully functional and tested
+* Clean integration with other epic areas
+* Validation requirements met
+
+**Labels**
+epic,${epic_labels}"
+
+    # Create epic ticket
+    epic_result=$(python3 .tools/saber.py create "$epic_name" "$epic_description" 2>/dev/null)
+    epic_ticket=$(echo "$epic_result" | grep -oE "${ticket_prefix}-[0-9]+" | head -1)
+    
+    if [ -n "$epic_ticket" ]; then
+        echo -e "${SUCCESS} Created epic: ${epic_ticket} - ${epic_name}"
+        epic_tickets+=("$epic_ticket")
+        
+        # Set parent relationship
+        python3 .tools/saber.py parent "$epic_ticket" "$impl_ticket" >/dev/null 2>&1
+        
+        # Add labels
+        python3 .tools/saber.py label "$epic_ticket" add "$epic_labels" >/dev/null 2>&1
+        python3 .tools/saber.py label "$epic_ticket" add "epic" >/dev/null 2>&1
+    else
+        echo -e "${ERROR} Failed to create epic: ${epic_name}"
+    fi
+done
+
+# Step 4: Label project tickets
+echo -e "${WORKING} Applying project labels..."
+python3 .tools/saber.py label "$project_ticket" add "project" >/dev/null 2>&1
+python3 .tools/saber.py label "$impl_ticket" add "implementation" >/dev/null 2>&1
+
+echo ""
+echo -e "${INFO} ${GREEN}Project Structure Creation Complete!${NC}"
+echo ""
+echo -e "${STRUCTURE} Created Structure:"
+echo -e "${INFO} ${project_ticket}: [Project] ${project_name}"
+echo -e "${INFO} └── ${impl_ticket}: [Implementation] Core Feature Development"
+
+for epic_ticket in "${epic_tickets[@]}"; do
+    epic_title=$(python3 .tools/saber.py get "$epic_ticket" 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('title', 'Unknown'))" 2>/dev/null)
+    echo -e "${INFO}     ├── ${epic_ticket}: [Epic] ${epic_title}"
+done
+
+echo ""
+echo -e "${INFO} Next Steps:"
+echo -e "${INFO} 1. Use ./validate_ticket on each epic to check if breakdown needed"
+echo -e "${INFO} 2. Use ./bulk_breakdown split <epic-id> if validation fails"
+echo -e "${INFO} 3. Apply additional labels as needed"
+echo -e "${INFO} 4. Ready for development assignment!"
+echo ""
+echo -e "${BLUE}Project structure ready for validation and breakdown!${NC}"

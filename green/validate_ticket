@@ -1,12 +1,13 @@
 #!/bin/bash
-# validate_ticket command for Agent-Knowledge
-# Automates: Ticket validation against bad patterns -> Breakdown suggestions -> Violation reporting
+# Unified Ticket Validation Tool
+# Layered validation with graceful fallback: Domain-Aware → Example-Based → Basic
 
 # Colors and emoji
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
 NC='\033[0m'
 SUCCESS="✅"
 ERROR="❌"
@@ -16,23 +17,144 @@ WORKING="🔄"
 CHECK="🔍"
 BREAKDOWN="🔨"
 VALIDATE="✨"
+EXAMPLE="📖"
+DOMAIN="🎯"
+LAYER="🏗️"
 
-# Usage check
-if [ $# -ne 1 ]; then
-    echo -e "${ERROR} Usage: ./validate_ticket <TICKET_ID>"
-    echo -e "${INFO} Example: ./validate_ticket CEN-409"
+# Default settings
+MODE="auto"
+VERBOSE=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --mode=*)
+            MODE="${1#*=}"
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 <TICKET_ID> [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --mode=auto      Auto-detect best validation mode (default)"
+            echo "  --mode=adaptive  Force adaptive domain detection"  
+            echo "  --mode=enhanced  Force example-based validation"
+            echo "  --mode=basic     Force basic pattern matching"
+            echo "  --verbose        Show detailed analysis steps"
+            echo "  --help           Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0 PLY-48                    # Auto-detect validation mode"
+            echo "  $0 PLY-48 --mode=adaptive   # Use domain matrices"
+            echo "  $0 PLY-48 --verbose         # Show detailed analysis"
+            exit 0
+            ;;
+        --*)
+            echo -e "${ERROR} Unknown option: $1"
+            echo -e "${INFO} Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            if [[ -z "$TICKET_ID" ]]; then
+                TICKET_ID="$1"
+            else
+                echo -e "${ERROR} Multiple ticket IDs not supported: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate ticket ID provided
+if [[ -z "$TICKET_ID" ]]; then
+    echo -e "${ERROR} Usage: $0 <TICKET_ID> [OPTIONS]"
+    echo -e "${INFO} Example: $0 PLY-48 --verbose"
+    echo -e "${INFO} Use --help for more options"
     exit 1
 fi
 
-TICKET_ID="$1"
+# Capability detection
+detect_capabilities() {
+    local has_business_domains=false
+    local has_technical_domains=false
+    local has_examples=false
+    
+    if [[ -f "BUSINESS_DOMAINS.md" ]]; then
+        has_business_domains=true
+    fi
+    
+    if [[ -f "TECHNICAL_DOMAINS.md" ]]; then
+        has_technical_domains=true
+    fi
+    
+    if [[ -f "GOOD_IMPLEMENTATION_TICKET_EXAMPLE.md" ]] || [[ -f "BAD_TICKET_EXAMPLE.md" ]]; then
+        has_examples=true
+    fi
+    
+    # Determine effective validation mode
+    case "$MODE" in
+        "auto")
+            if [[ "$has_business_domains" == true && "$has_technical_domains" == true ]]; then
+                EFFECTIVE_MODE="adaptive"
+            elif [[ "$has_examples" == true ]]; then
+                EFFECTIVE_MODE="enhanced"
+            else
+                EFFECTIVE_MODE="basic"
+            fi
+            ;;
+        "adaptive")
+            if [[ "$has_business_domains" == true && "$has_technical_domains" == true ]]; then
+                EFFECTIVE_MODE="adaptive"
+            else
+                echo -e "${WARNING} Domain matrices not found, falling back to enhanced mode"
+                EFFECTIVE_MODE="enhanced"
+            fi
+            ;;
+        "enhanced")
+            EFFECTIVE_MODE="enhanced"
+            ;;
+        "basic")
+            EFFECTIVE_MODE="basic"
+            ;;
+        *)
+            echo -e "${ERROR} Invalid mode: $MODE"
+            exit 1
+            ;;
+    esac
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${LAYER} ${BLUE}Validation Capabilities Detected:${NC}"
+        echo -e "${INFO} Business Domains: ${has_business_domains}"
+        echo -e "${INFO} Technical Domains: ${has_technical_domains}"  
+        echo -e "${INFO} Example Patterns: ${has_examples}"
+        echo -e "${INFO} Requested Mode: ${MODE}"
+        echo -e "${INFO} Effective Mode: ${EFFECTIVE_MODE}"
+        echo ""
+    fi
+}
 
-echo -e "${INFO} ${BLUE}Agent-Knowledge Ticket Validation Framework${NC}"
-echo -e "${VALIDATE} Validating ${TICKET_ID} against bad patterns..."
+# Header
+echo -e "${INFO} ${BLUE}Unified Ticket Validation Tool${NC}"
+echo -e "${VALIDATE} Validating ${TICKET_ID} with layered approach..."
+
+# Detect capabilities and set effective mode
+detect_capabilities
+
+if [[ "$VERBOSE" == false ]]; then
+    echo -e "${LAYER} Validation Mode: ${EFFECTIVE_MODE}"
+fi
 echo ""
 
-# Step 1: Get ticket details
+# Step 1: Get ticket details (common across all modes)
 echo -e "${CHECK} Step 1: Retrieving ticket details..."
-echo -e "${WORKING} Getting ticket information..."
+if [[ "$VERBOSE" == true ]]; then
+    echo -e "${WORKING} Getting ticket information..."
+fi
 
 ticket_details=$(python3 .tools/saber.py get "$TICKET_ID" 2>/dev/null)
 if [ $? -ne 0 ]; then
@@ -45,200 +167,461 @@ ticket_title=$(echo "$ticket_details" | jq -r '.title // "Unknown"')
 ticket_description=$(echo "$ticket_details" | jq -r '.description // ""')
 ticket_state=$(echo "$ticket_details" | jq -r '.state.name // "Unknown"')
 parent_id=$(echo "$ticket_details" | jq -r '.parent.identifier // null')
-children_count=$(echo "$ticket_details" | jq -r '.children.nodes | length')
 
 echo -e "${SUCCESS} Retrieved: ${ticket_title}"
-echo -e "${INFO} Status: ${ticket_state}"
-if [ "$parent_id" != "null" ]; then
-    echo -e "${INFO} Parent: ${parent_id}"
-fi
-if [ "$children_count" -gt 0 ]; then
-    echo -e "${INFO} Children: ${children_count} subtasks"
-fi
-
-# Step 2: Validation checks
-echo -e "${CHECK} Step 2: Running validation checks..."
-echo ""
-
-violation_count=0
-breakdown_needed=false
-
-# Check 1: Multiple Task Analysis (philosophical approach)
-echo -e "${WORKING} Checking for multiple tasks..."
-
-# Look for indicators of multiple distinct tasks (not sub-requirements)
-# Check for multiple major deliverables or components
-major_task_indicators=0
-
-# Look for "and" connecting different major components
-if echo "$ticket_description" | grep -iq -E "(implement.*and.*(build|create|develop))"; then
-    major_task_indicators=$((major_task_indicators + 1))
-fi
-
-# Look for multiple component names
-if echo "$ticket_description" | grep -iq -E "(database.*and.*(api|frontend))"; then
-    major_task_indicators=$((major_task_indicators + 1))
-fi
-
-if echo "$ticket_description" | grep -iq -E "(frontend.*and.*(backend|api))"; then
-    major_task_indicators=$((major_task_indicators + 1))
-fi
-
-# Look for sequential phases mentioned together
-if echo "$ticket_description" | grep -iq -E "(first.*then|step 1.*step 2)"; then
-    major_task_indicators=$((major_task_indicators + 1))
-fi
-
-# Look for multiple verb phrases indicating separate work streams
-distinct_verbs=$(echo "$ticket_description" | grep -io -E "(implement|build|create|develop|design|research)" | sort -u | wc -l)
-if [ "$distinct_verbs" -gt 2 ]; then
-    major_task_indicators=$((major_task_indicators + 1))
-fi
-
-if [ "$major_task_indicators" -gt 0 ]; then
-    echo -e "${WARNING} Found ${major_task_indicators} indicators of multiple major tasks"
-    violation_count=$((violation_count + 1))
-    breakdown_needed=true
-else
-    echo -e "${SUCCESS} Single focused task detected"
-fi
-
-# Check 2: Phase Mixing Detection (pattern-based)
-echo -e "${WORKING} Checking for phase mixing..."
-
-# Look for explicit phase mixing patterns
-phase_mixing_patterns=""
-
-# Research + Implementation mixing
-if echo "$ticket_description" | grep -iq -E "(research|analyze|study|investigate)" && echo "$ticket_description" | grep -iq -E "(implement|build|create|develop|code)"; then
-    phase_mixing_patterns="${phase_mixing_patterns}Research+Implementation "
-fi
-
-# Research + Design mixing (less problematic but still worth noting)
-if echo "$ticket_description" | grep -iq -E "(research|analyze|study|investigate)" && echo "$ticket_description" | grep -iq -E "(design|architect|plan|specify)"; then
-    # Only flag if it's clearly separate phases, not just "research design patterns"
-    if echo "$ticket_description" | grep -iq -E "research.*then.*design|analyze.*then.*(plan|specify)|study.*and.*(architect|design)"; then
-        phase_mixing_patterns="${phase_mixing_patterns}Research+Design "
+if [[ "$VERBOSE" == true ]]; then
+    echo -e "${INFO} Status: ${ticket_state}"
+    if [[ "$parent_id" != "null" ]]; then
+        echo -e "${INFO} Parent: ${parent_id}"
     fi
 fi
 
-# Design + Implementation mixing  
-if echo "$ticket_description" | grep -iq -E "(design|architect|plan|specify)" && echo "$ticket_description" | grep -iq -E "(implement|build|create|develop|code)"; then
-    # Only flag if it's clearly separate phases, not just "design implementation approach"
-    if echo "$ticket_description" | grep -iq -E "design.*then.*(implement|build)|specify.*then.*(create|develop)|plan.*and.*(implement|build)"; then
-        phase_mixing_patterns="${phase_mixing_patterns}Design+Implementation "
-    fi
-fi
+# Initialize analysis variables (used across all modes)
+good_pattern_matches=()
+bad_pattern_indicators=()
+concerns=()
+confidence_score=0
 
-# Check for sequential phase indicators
-if echo "$ticket_description" | grep -iq -E "(first.*then|step 1.*step 2|phase 1.*phase 2)"; then
-    phase_mixing_patterns="${phase_mixing_patterns}Sequential-Phases "
-fi
+# Combine ticket title and description for analysis
+ticket_content=$(echo "${ticket_title} ${ticket_description}" | tr '[:upper:]' '[:lower:]')
 
-if [ -n "$phase_mixing_patterns" ]; then
-    echo -e "${WARNING} Phase mixing patterns detected: ${phase_mixing_patterns}"
-    violation_count=$((violation_count + 1))
-    breakdown_needed=true
-else
-    echo -e "${SUCCESS} Single phase focus detected"
-fi
+#############################################################################
+# LAYER 1: DOMAIN-AWARE VALIDATION (if available)
+#############################################################################
 
-# Check 3: Context Switching Detection (only for significant context mixing)
-echo -e "${WORKING} Checking for multiple contexts..."
-contexts=""
-if echo "$ticket_description" | grep -iq -E "(database|schema|migration)" && echo "$ticket_description" | grep -iq -E "(frontend|ui|component|react)"; then 
-    contexts="${contexts}Database+Frontend "
-fi
-if echo "$ticket_description" | grep -iq -E "(database|schema|migration)" && echo "$ticket_description" | grep -iq -E "(devops|deployment|infrastructure|docker)"; then 
-    contexts="${contexts}Database+DevOps "
-fi
-if echo "$ticket_description" | grep -iq -E "(frontend|ui|component|react)" && echo "$ticket_description" | grep -iq -E "(backend|api|endpoint|server)" && ! echo "$ticket_title" | grep -iq "implement"; then
-    contexts="${contexts}Frontend+Backend "
-fi
-
-context_count=$(echo "$contexts" | wc -w)
-if [ "$context_count" -gt 0 ]; then
-    echo -e "${WARNING} Multiple contexts detected: ${contexts}"
-    violation_count=$((violation_count + 1))
-    breakdown_needed=true
-else
-    echo -e "${SUCCESS} Single context focus"
-fi
-
-# Check 4: Implementation Language in Design Tickets
-echo -e "${WORKING} Checking for implementation language in design tickets..."
-if echo "$ticket_title" | grep -iq "design"; then
-    impl_language=$(echo "$ticket_description" | grep -ic -E "(detailed|architect.*entry point|specific.*\.cs|achieve.*KB|performance targets)")
-    if [ "$impl_language" -gt 0 ]; then
-        echo -e "${WARNING} Implementation-focused language detected in design ticket"
-        violation_count=$((violation_count + 1))
-    else
-        echo -e "${SUCCESS} Proper design language used"
-    fi
-else
-    echo -e "${INFO} Not a design ticket, skipping design language check"
-fi
-
-# Check 5: Premature Performance Constraints
-echo -e "${WORKING} Checking for premature performance constraints..."
-perf_constraints=$(echo "$ticket_description" | grep -ic -E "(<[0-9]+ms|<[0-9]+KB|[0-9]+% improvement|performance targets|achieve.*ms)")
-if [ "$perf_constraints" -gt 0 ] && echo "$ticket_description" | grep -iq -E "(design|research|discovery)"; then
-    echo -e "${WARNING} Performance constraints found in discovery/design phase"
-    violation_count=$((violation_count + 1))
-else
-    echo -e "${SUCCESS} No premature performance constraints"
-fi
-
-# Check 6: External Reference Numbers
-echo -e "${WORKING} Checking for external reference numbers..."
-external_refs=$(echo "$ticket_description" | grep -c -E "[A-Z]+-[0-9]+-[0-9]+")
-if [ "$external_refs" -gt 0 ]; then
-    echo -e "${WARNING} External reference numbers found in description"
-    violation_count=$((violation_count + 1))
-else
-    echo -e "${SUCCESS} No external reference numbers"
-fi
-
-# Count keyword types for breakdown suggestions
-research_keywords=$(echo "$ticket_description" | grep -ic -E "(research|analysis|investigate|explore|study)")
-design_keywords=$(echo "$ticket_description" | grep -ic -E "(design|architect|plan|specification|blueprint)")
-implement_keywords=$(echo "$ticket_description" | grep -ic -E "(implement|build|create|develop|code)")
-
-# Step 3: Validation results
-echo ""
-echo -e "${CHECK} Step 3: Validation results..."
-
-if [ "$violation_count" -eq 0 ]; then
-    echo -e "${SUCCESS} ${GREEN}VALIDATION PASSED!${NC}"
-    echo -e "${INFO} Ticket follows good patterns"
-    echo -e "${INFO} No violations detected"
-else
-    echo -e "${ERROR} ${RED}VALIDATION FAILED!${NC}"
-    echo -e "${WARNING} ${violation_count} violations detected"
+if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+    echo -e "${CHECK} Step 2: Domain matrix analysis..."
     
-    if [ "$breakdown_needed" = true ]; then
-        echo ""
-        echo -e "${BREAKDOWN} ${YELLOW}BREAKDOWN RECOMMENDED${NC}"
-        echo -e "${INFO} This ticket should be converted to parent with subtasks"
-        echo -e "${INFO} Golden Rule: Tickets have EITHER work OR subtasks, NEVER both"
-        echo ""
-        echo -e "${BLUE}Suggested Breakdown Approach:${NC}"
+    # Function to extract keywords from domain matrix
+    extract_domain_keywords() {
+        local domain_file="$1"
+        local section_name="$2"
         
-        if [ "$research_keywords" -gt 0 ]; then
-            echo -e "${INFO} • Create research ticket for analysis phase"
+        if [[ -f "$domain_file" ]]; then
+            awk -v section="### $section_name" '
+                $0 ~ section { found=1; next }
+                found && /^### / && $0 !~ section { found=0 }
+                found && /^\*\*Keywords:\*\*/ { 
+                    gsub(/\*\*Keywords:\*\* /, ""); 
+                    gsub(/, /, " ");
+                    print $0 
+                }
+            ' "$domain_file"
         fi
-        if [ "$design_keywords" -gt 0 ]; then
-            echo -e "${INFO} • Create design ticket for functional specifications"
+    }
+    
+    # Load domain matrices
+    declare -A business_domains
+    declare -A technical_domains
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${SUCCESS} Loading domain matrices..."
+    fi
+    
+    # Load business domains
+    business_domains[Authentication]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Authentication")
+    business_domains[File_Discovery]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "File Discovery")
+    business_domains[Audio_Streaming]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Audio Streaming")
+    business_domains[Playback_Control]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Playback Control")
+    business_domains[Music_Library]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Music Library")
+    business_domains[Background_Services]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Background Services")
+    
+    # Load technical domains
+    technical_domains[Android_UI]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Android UI")
+    technical_domains[API_Client]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "API Client")
+    technical_domains[Storage_Persistence]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Storage & Persistence")
+    technical_domains[State_Management]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "State Management")
+    technical_domains[Audio_Engine]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Audio Engine")
+    technical_domains[Background_Services_Tech]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Background Services")
+    technical_domains[Testing_Quality]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Testing & Quality")
+    
+    # Domain detection
+    detected_business_domains=()
+    detected_technical_domains=()
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${DOMAIN} Business domain detection:"
+    fi
+    
+    # Detect business domains
+    for domain in "${!business_domains[@]}"; do
+        keywords="${business_domains[$domain]}"
+        if [[ -n "$keywords" ]]; then
+            match_count=0
+            for keyword in $keywords; do
+                if [[ "$keyword" == *" "* ]]; then
+                    if echo "$ticket_content" | grep -q -i "$keyword"; then
+                        match_count=$((match_count + 1))
+                    fi
+                else
+                    if echo "$ticket_content" | grep -q -i -w "$keyword"; then
+                        match_count=$((match_count + 1))
+                    fi
+                fi
+            done
+            
+            if [[ $match_count -ge 3 ]]; then
+                detected_business_domains+=("$domain")
+                if [[ "$VERBOSE" == true ]]; then
+                    echo -e "${SUCCESS} • $domain ($match_count keywords matched)"
+                fi
+            elif [[ "$VERBOSE" == true && $match_count -ge 2 ]]; then
+                echo -e "${INFO} • $domain ($match_count keywords matched - moderate signal)"
+            elif [[ "$VERBOSE" == true && $match_count -eq 1 ]]; then
+                echo -e "${INFO} • $domain (1 keyword matched - weak signal)"
+            fi
         fi
-        if [ "$implement_keywords" -gt 0 ]; then
-            echo -e "${INFO} • Create implementation ticket(s) for building phase"
+    done
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${DOMAIN} Technical domain detection:"
+    fi
+    
+    # Detect technical domains  
+    for domain in "${!technical_domains[@]}"; do
+        keywords="${technical_domains[$domain]}"
+        if [[ -n "$keywords" ]]; then
+            match_count=0
+            for keyword in $keywords; do
+                if [[ "$keyword" == *" "* ]]; then
+                    if echo "$ticket_content" | grep -q -i "$keyword"; then
+                        match_count=$((match_count + 1))
+                    fi
+                else
+                    if echo "$ticket_content" | grep -q -i -w "$keyword"; then
+                        match_count=$((match_count + 1))
+                    fi
+                fi
+            done
+            
+            if [[ $match_count -ge 2 ]]; then
+                detected_technical_domains+=("$domain")
+                if [[ "$VERBOSE" == true ]]; then
+                    echo -e "${SUCCESS} • $domain ($match_count keywords matched)"
+                fi
+            elif [[ "$VERBOSE" == true && $match_count -eq 1 ]]; then
+                echo -e "${INFO} • $domain (1 keyword matched - weak signal)"
+            fi
         fi
-        
-        if [ "$context_count" -gt 1 ]; then
-            echo -e "${INFO} • Split by technical context: ${contexts}"
-        fi
+    done
+    
+    # Domain-based anti-patterns
+    business_domain_count=${#detected_business_domains[@]}
+    technical_domain_count=${#detected_technical_domains[@]}
+    
+    if [[ $business_domain_count -gt 1 ]]; then
+        bad_pattern_indicators+=("Multiple Business Domains: ${detected_business_domains[*]}")
+        confidence_score=$((confidence_score - 50))
+    fi
+    
+    if [[ $technical_domain_count -gt 4 ]]; then
+        bad_pattern_indicators+=("Too Many Technical Domains (${technical_domain_count}): ${detected_technical_domains[*]}")
+        confidence_score=$((confidence_score - 30))
+    fi
+    
+    # Domain-based concerns
+    if [[ $business_domain_count -eq 2 ]]; then
+        concerns+=("Two business domains: ${detected_business_domains[*]} - verify cohesive workflow")
+    fi
+    
+    if [[ $technical_domain_count -eq 4 || $technical_domain_count -eq 5 ]]; then
+        concerns+=("Multiple technical domains (${technical_domain_count}): ${detected_technical_domains[*]} - ensure single business focus")
+    fi
+    
+    if [[ "$VERBOSE" == false ]]; then
+        echo -e "${DOMAIN} Detected: ${business_domain_count} business, ${technical_domain_count} technical domains"
+    fi
+fi
+
+#############################################################################
+# LAYER 2: EXAMPLE-BASED PATTERN ANALYSIS (always available)
+#############################################################################
+
+if [[ "$EFFECTIVE_MODE" == "adaptive" || "$EFFECTIVE_MODE" == "enhanced" ]]; then
+    echo -e "${CHECK} Step 3: Pattern analysis..."
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${EXAMPLE} Checking for good patterns..."
+    fi
+    
+    # Good Pattern Detection
+    
+    # Pattern 1: Single Domain Workflow
+    if echo "$ticket_description" | grep -iq -E "(authentication|login|token)" && 
+       echo "$ticket_description" | grep -iq -E "(api|endpoint|client)" && 
+       ! echo "$ticket_description" | grep -iq -E "(database.*and.*frontend|ui.*and.*backend.*and.*database)"; then
+        good_pattern_matches+=("Single Domain Workflow")
+        confidence_score=$((confidence_score + 30))
+    fi
+    
+    # Pattern 2: Component Implementation
+    if echo "$ticket_description" | grep -iq -E "(middleware|component|service|client)" &&
+       echo "$ticket_description" | grep -iq -E "(implement|create|build)" &&
+       ! echo "$ticket_description" | grep -iq -E "(research.*and|design.*and.*implement|multiple|several)"; then
+        good_pattern_matches+=("Component Implementation")  
+        confidence_score=$((confidence_score + 25))
+    fi
+    
+    # Pattern 3: API Integration
+    if echo "$ticket_description" | grep -iq -E "(api|endpoint|http|rest)" &&
+       echo "$ticket_description" | grep -iq -E "(call|request|response|client)" &&
+       echo "$ticket_description" | grep -iq -E "(handle|process|manage)"; then
+        good_pattern_matches+=("API Integration")
+        confidence_score=$((confidence_score + 20))
+    fi
+    
+    # Pattern 4: TDD Implementation
+    if echo "$ticket_description" | grep -iq -E "(test|tdd)" &&
+       echo "$ticket_description" | grep -iq -E "(implement|build|create)" &&
+       ! echo "$ticket_description" | grep -iq -E "(write tests.*and.*implement|testing.*separately)"; then
+        good_pattern_matches+=("TDD Process")
+        confidence_score=$((confidence_score + 15))
+    fi
+    
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${EXAMPLE} Checking for bad patterns..."
+    fi
+    
+    # Bad Pattern Detection
+    
+    # Anti-pattern 1: Phase Mixing
+    if echo "$ticket_description" | grep -iq -E "(research|investigate|analyze|explore)" && 
+       echo "$ticket_description" | grep -iq -E "(implement|build|create)" &&
+       echo "$ticket_description" | grep -iq -E "(then|after|once|first.*then)"; then
+        bad_pattern_indicators+=("Sequential Phase Mixing (Research then Implementation)")
+        confidence_score=$((confidence_score - 30))
+    fi
+    
+    # Anti-pattern 2: Architecture + Implementation
+    if echo "$ticket_description" | grep -iq -E "(design.*architect|plan.*system)" &&
+       echo "$ticket_description" | grep -iq -E "(implement.*build|create.*develop)" &&
+       echo "$ticket_description" | grep -iq -E "(and|then|also)"; then  
+        bad_pattern_indicators+=("Design + Implementation Phase Mixing")
+        confidence_score=$((confidence_score - 25))
+    fi
+    
+    # Anti-pattern 3: Epic-level Scope
+    epic_indicators=0
+    if echo "$ticket_description" | grep -iq -E "(system|platform|infrastructure)"; then
+        epic_indicators=$((epic_indicators + 1))
+    fi
+    if echo "$ticket_description" | grep -iq -E "(multiple|several|various|different)"; then
+        epic_indicators=$((epic_indicators + 1))
+    fi
+    if echo "$ticket_description" | grep -iq -E "(end.*to.*end|complete.*solution|full.*stack)"; then
+        epic_indicators=$((epic_indicators + 1))
+    fi
+    
+    if [ "$epic_indicators" -gt 1 ]; then
+        bad_pattern_indicators+=("Epic-level Scope")
+        confidence_score=$((confidence_score - 35))
+    fi
+    
+    # Common concerns across enhanced/adaptive
+    
+    # Multiple verbs
+    verb_count=$(echo "$ticket_description" | grep -io -E "(implement|build|create|develop|design|research|analyze)" | sort -u | wc -l)
+    if [ "$verb_count" -gt 3 ]; then
+        concerns+=("Multiple action verbs (${verb_count}) - verify single workflow")
+    fi
+    
+    # Long description
+    desc_length=$(echo "$ticket_description" | wc -w)
+    if [ "$desc_length" -gt 200 ]; then
+        concerns+=("Long description (${desc_length} words) - consider scope focus")
+    fi
+    
+    # External references
+    if echo "$ticket_description" | grep -q -E "[A-Z]+-[0-9]+-[0-9]+"; then
+        concerns+=("External reference numbers - clean up for Linear")
+    fi
+    
+    # Conjunction words (cross-domain mixing indicator)
+    if echo "$ticket_content" | grep -q -E "(and|plus|\+|also|additionally)"; then
+        concerns+=("Conjunction words detected - verify single task focus")
+    fi
+fi
+
+#############################################################################
+# LAYER 3: BASIC PATTERN MATCHING (fallback)
+#############################################################################
+
+if [[ "$EFFECTIVE_MODE" == "basic" ]]; then
+    echo -e "${CHECK} Step 3: Basic pattern analysis..."
+    
+    # Basic hardcoded domain detection (fallback)
+    basic_domains=()
+    if echo "$ticket_description" | grep -iq -E "(database|schema|sql|migration)"; then
+        basic_domains+=("Database")
+    fi
+    if echo "$ticket_description" | grep -iq -E "(frontend|ui|component|react|vue|angular)"; then
+        basic_domains+=("Frontend")  
+    fi
+    if echo "$ticket_description" | grep -iq -E "(devops|deployment|docker|kubernetes|infrastructure)"; then
+        basic_domains+=("DevOps")
+    fi
+    
+    if [ ${#basic_domains[@]} -gt 2 ]; then
+        bad_pattern_indicators+=("Multiple Unrelated Domains: ${basic_domains[*]}")
+        confidence_score=$((confidence_score - 40))
+    fi
+    
+    # Basic phase mixing detection
+    if echo "$ticket_description" | grep -iq -E "(research|investigate)" && 
+       echo "$ticket_description" | grep -iq -E "(implement|build)"; then
+        bad_pattern_indicators+=("Phase Mixing Detected")
+        confidence_score=$((confidence_score - 25))
+    fi
+    
+    # Basic complexity indicators
+    word_count=$(echo "$ticket_description" | wc -w)
+    if [ "$word_count" -gt 150 ]; then
+        concerns+=("Long description (${word_count} words)")
+    fi
+fi
+
+#############################################################################
+# FINAL DECISION LOGIC
+#############################################################################
+
+echo -e "${CHECK} Step 4: Validation summary..."
+echo ""
+
+# Show domain detection results (adaptive mode only)
+if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+    echo -e "${DOMAIN} ${BLUE}Domain Analysis:${NC}"
+    if [[ ${#detected_business_domains[@]} -eq 0 ]]; then
+        echo -e "${INFO} Business Domains: None detected"
+    else
+        echo -e "${INFO} Business Domains (${business_domain_count}): ${detected_business_domains[*]}"
+    fi
+    if [[ ${#detected_technical_domains[@]} -eq 0 ]]; then
+        echo -e "${INFO} Technical Domains: None detected"  
+    else
+        echo -e "${INFO} Technical Domains (${technical_domain_count}): ${detected_technical_domains[*]}"
+    fi
+    echo ""
+fi
+
+# Show patterns found
+if [ ${#good_pattern_matches[@]} -gt 0 ]; then
+    echo -e "${SUCCESS} ${GREEN}Good patterns detected:${NC}"
+    for pattern in "${good_pattern_matches[@]}"; do
+        echo -e "${SUCCESS} • $pattern"
+    done
+    echo ""
+fi
+
+if [ ${#bad_pattern_indicators[@]} -gt 0 ]; then
+    echo -e "${WARNING} ${YELLOW}Problematic patterns detected:${NC}"
+    for indicator in "${bad_pattern_indicators[@]}"; do
+        echo -e "${WARNING} • $indicator"
+    done
+    echo ""
+fi
+
+if [ ${#concerns[@]} -gt 0 ]; then
+    echo -e "${INFO} ${PURPLE}Additional considerations:${NC}"
+    for concern in "${concerns[@]}"; do
+        echo -e "${INFO} • $concern"
+    done
+    echo ""
+fi
+
+# Final recommendation
+echo -e "${CHECK} ${BLUE}Final Recommendation:${NC}"
+echo ""
+
+# Domain-based decision logic (adaptive mode)
+if [[ "$EFFECTIVE_MODE" == "adaptive" && $business_domain_count -gt 1 ]]; then
+    echo -e "${BREAKDOWN} ${RED}BREAKDOWN REQUIRED - MULTIPLE BUSINESS DOMAINS${NC}"
+    echo -e "${INFO} Ticket spans multiple business capabilities: ${detected_business_domains[*]}"
+    echo -e "${INFO} This violates the single-domain principle"
+    echo ""
+    echo -e "${BLUE}Recommended Action:${NC}"
+    echo -e "${INFO} • Split into separate tickets by business domain"
+    for domain in "${detected_business_domains[@]}"; do
+        echo -e "${INFO}   - Create focused ticket for $domain domain"
+    done
+
+elif [[ "$EFFECTIVE_MODE" == "adaptive" && $technical_domain_count -gt 4 && $business_domain_count -eq 0 ]]; then
+    echo -e "${BREAKDOWN} ${RED}BREAKDOWN RECOMMENDED - TOO MANY TECHNICAL DOMAINS${NC}"
+    echo -e "${INFO} Ticket spans too many technical areas (${technical_domain_count}): ${detected_technical_domains[*]}"
+    echo -e "${INFO} Consider breaking into focused technical subtasks"
+
+# Standard decision logic (all modes)
+elif [ "$confidence_score" -ge 50 ] && [ ${#bad_pattern_indicators[@]} -eq 0 ]; then
+    echo -e "${SUCCESS} ${GREEN}PROCEED WITH IMPLEMENTATION${NC}"
+    echo -e "${INFO} This ticket follows good patterns and is ready for development"
+    echo -e "${INFO} Confidence Score: ${confidence_score}/100"
+    if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+        echo -e "${INFO} Domain Complexity: ${business_domain_count} business, ${technical_domain_count} technical"
+    fi
+
+elif [ "$confidence_score" -ge 20 ] && [ ${#bad_pattern_indicators[@]} -le 1 ]; then
+    echo -e "${WARNING} ${YELLOW}PROCEED WITH CAUTION${NC}"
+    echo -e "${INFO} Ticket has good elements but some concerns"
+    echo -e "${INFO} Consider reviewing scope or approach"  
+    echo -e "${INFO} Confidence Score: ${confidence_score}/100"
+    if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+        echo -e "${INFO} Domain Complexity: ${business_domain_count} business, ${technical_domain_count} technical"
+    fi
+    
+    if [ ${#concerns[@]} -gt 0 ]; then
+        echo -e "${INFO} Address these concerns before starting:"
+        for concern in "${concerns[@]}"; do
+            echo -e "${INFO}   - $concern"
+        done
+    fi
+
+elif [ ${#bad_pattern_indicators[@]} -gt 0 ]; then
+    echo -e "${BREAKDOWN} ${RED}BREAKDOWN RECOMMENDED${NC}"
+    echo -e "${INFO} Ticket contains problematic patterns that suggest breakdown needed"
+    echo -e "${INFO} Confidence Score: ${confidence_score}/100"
+    echo ""
+    echo -e "${BLUE}Suggested Actions:${NC}"
+    
+    for indicator in "${bad_pattern_indicators[@]}"; do
+        case "$indicator" in
+            *"Multiple Business Domains"*)
+                echo -e "${INFO} • Split by business domain: ${detected_business_domains[*]}"
+                ;;
+            *"Multiple Unrelated Domains"*)
+                echo -e "${INFO} • Split into separate tickets by domain"
+                ;;
+            *"Too Many Technical Domains"*)
+                echo -e "${INFO} • Break into focused technical subtasks"
+                ;;
+            *"Phase Mixing"*|*"Sequential Phase Mixing"*)
+                echo -e "${INFO} • Create separate research and implementation tickets"
+                ;;
+            *"Design + Implementation"*)
+                echo -e "${INFO} • Separate design and implementation phases"
+                ;;
+            *"Epic-level"*)
+                echo -e "${INFO} • Convert to epic with focused implementation subtasks"
+                ;;
+        esac
+    done
+
+else
+    echo -e "${WARNING} ${YELLOW}UNCLEAR PATTERN${NC}"
+    echo -e "${INFO} Unable to match against known good/bad patterns"
+    echo -e "${INFO} Manual review recommended"
+    echo -e "${INFO} Confidence Score: ${confidence_score}/100"
+    if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+        echo -e "${INFO} Domain Complexity: ${business_domain_count} business, ${technical_domain_count} technical"
     fi
 fi
 
 echo ""
 echo -e "${VALIDATE} ${BLUE}Validation complete for ${TICKET_ID}${NC}"
+echo -e "${LAYER} ${PURPLE}Validation Mode: ${EFFECTIVE_MODE}${NC}"
+
+# Show available resources
+if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
+    echo -e "${INFO} ${PURPLE}Domain matrices: BUSINESS_DOMAINS.md, TECHNICAL_DOMAINS.md${NC}"
+fi
+if [[ -f "GOOD_IMPLEMENTATION_TICKET_EXAMPLE.md" ]]; then
+    echo -e "${INFO} ${PURPLE}Compare with: GOOD_IMPLEMENTATION_TICKET_EXAMPLE.md${NC}"
+fi

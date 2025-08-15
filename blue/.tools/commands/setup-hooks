@@ -25,7 +25,7 @@ if [[ ! -d ".git" ]]; then
 fi
 
 # Check if .NET project exists
-if [[ ! -f "*.sln" ]] && [[ ! -f "*.csproj" ]] && [[ ! -d "src" ]]; then
+if [[ ! -f *.sln ]] && [[ ! -f *.csproj ]] && [[ ! -d "src" ]]; then
     echo -e "${YELLOW} Warning: No .NET project files found"
     echo -e "${INFO} Pre-commit hook assumes .NET project structure"
 fi
@@ -36,8 +36,8 @@ echo -e "${WORKING} Installing Centro pre-commit hook..."
 mkdir -p .git/hooks
 
 # Copy pre-commit hook
-cp ~/.spectrum-dev/hooks/pre-commit .git/hooks/pre-commit 2>/dev/null || {
-    # If not found in spectrum-dev, create it
+cp .tools/hooks/pre-commit .git/hooks/pre-commit 2>/dev/null || {
+    # If not found in .tools/, create it inline
     cat > .git/hooks/pre-commit << 'EOF'
 #!/bin/bash
 # Pre-commit hook for Spectrum Development Framework
@@ -136,7 +136,7 @@ echo -e "\n${SUCCESS} ${GREEN}ALL QUALITY GATES PASSED${NC}"
 
 # Show warning counts for awareness (but don't block)
 warning_count=$(dotnet build --no-restore 2>&1 | grep -c "warning" || echo "0")
-if [[ $warning_count -gt 0 ]]; then
+if [[ "$warning_count" -gt 0 ]]; then
     echo -e "${INFO} ${YELLOW}Note: $warning_count non-blocking warnings found${NC}"
     echo -e "${INFO} Consider addressing these in future refactoring"
 fi

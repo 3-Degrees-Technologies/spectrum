@@ -43,7 +43,7 @@ if [[ -f "$TICKET_INFO_FILE" ]]; then
     # Validate the discovered file still exists
     if [[ ! -f "$downloaded_file" ]]; then
         echo -e "${ERROR} Discovered ticket file not found: $downloaded_file"
-        echo -e "${INFO} Please re-run discovery phase: .spectrum-dev/spectrum-dev discover-ticket"
+        echo -e "${INFO} Please re-run discovery phase: .tools/commands/discover-ticket"
         exit 1
     fi
     
@@ -72,22 +72,91 @@ fi
 echo -e "${SUCCESS} Ready to proceed with ticket: ${BLUE}$ticket_id${NC} - $ticket_title"
 echo -e "${SUCCESS} Using ticket file: $downloaded_file ($(wc -l < "$downloaded_file") lines)"
 
+# Domain detection function for AI agents - no interactive prompts
+detect_domain() {
+    local ticket_file="$1"
+    local ticket_content=$(cat "$ticket_file" | tr '[:upper:]' '[:lower:]')
+    
+    # Check ticket content for domain keywords
+    if echo "$ticket_content" | grep -q -E "(lambda|aws lambda|projection|event sourcing)"; then
+        if [[ -d "src/Centro.Core/Lambda" ]]; then
+            echo "src/Centro.Core/Lambda"
+            return 0
+        fi
+    elif echo "$ticket_content" | grep -q -E "(balance|account|currency)"; then
+        if [[ -d "src/Centro.Core/Balance" ]]; then
+            echo "src/Centro.Core/Balance"
+            return 0
+        fi
+    elif echo "$ticket_content" | grep -q -E "(quote|pricing|rate)"; then
+        if [[ -d "src/Centro.Core/Quote" ]]; then
+            echo "src/Centro.Core/Quote"
+            return 0
+        fi
+    elif echo "$ticket_content" | grep -q -E "(payout|payment|transfer)"; then
+        if [[ -d "src/Centro.Core/Payout" ]]; then
+            echo "src/Centro.Core/Payout"
+            return 0
+        fi
+    elif echo "$ticket_content" | grep -q -E "(api|controller|endpoint)"; then
+        if [[ -d "src/Centro.Api" ]]; then
+            echo "src/Centro.Api"
+            return 0
+        fi
+    elif echo "$ticket_content" | grep -q -E "(infrastructure|aws|deployment)"; then
+        if [[ -d "src/Centro.Infrastructure" ]]; then
+            echo "src/Centro.Infrastructure"
+            return 0
+        fi
+    fi
+    
+    # Return error - let AI agent decide
+    return 1
+}
+
+# Validate domain exists or create it
+ensure_domain_exists() {
+    local domain_path="$1"
+    if [[ ! -d "$domain_path" ]]; then
+        echo -e "${WORKING} Creating domain folder: $domain_path"
+        mkdir -p "$domain_path"
+        
+        # Create tickets subfolder for future archival if in src/
+        if [[ "$domain_path" == src/* ]]; then
+            mkdir -p "$domain_path/tickets"
+        fi
+    fi
+}
+
 # Domain detection and workspace setup
 echo -e "\n${FOLDER} Step 1: Setting up ticket workspace..."
+echo -e "${INFO} ${YELLOW}Detecting appropriate domain for ticket...${NC}"
 
-echo -e "${INFO} ${YELLOW}AI Agent: Choose appropriate folder for this ticket based on content.${NC}"
-echo "For now, tickets will be placed in project root. Future enhancement will add intelligent domain detection."
-
-# For now, place tickets in root-level tickets folder
-domain="tickets"
-base_path="."
-domain_folder="$base_path/$domain"
-
-# Create domain folder if it doesn't exist
-if [[ ! -d "$domain_folder" ]]; then
-    echo -e "${WORKING} Creating new domain folder: $domain_folder"
-    mkdir -p "$domain_folder"
+if domain_folder=$(detect_domain "$downloaded_file"); then
+    echo -e "${SUCCESS} Auto-detected domain: $domain_folder"
+    domain=$(basename "$domain_folder")
+    base_path=$(dirname "$domain_folder")
+else
+    echo -e "${ERROR} Could not auto-detect domain for this ticket"
+    echo -e "${INFO} Available domains found in codebase:"
+    find src/ -type d -name "Centro.*" | grep -v bin | grep -v obj | sort | sed 's/^/  - /'
+    echo -e "  - tickets/ (fallback)"
+    echo ""
+    echo -e "${ERROR} ${RED}AI AGENT ACTION REQUIRED:${NC}"
+    echo -e "${INFO} Please examine the ticket content and choose the appropriate domain:"
+    echo -e "${INFO} 1. Move the ticket file to the correct domain folder manually"
+    echo -e "${INFO} 2. Update the workflow state to reflect the correct domain"
+    echo -e "${INFO} 3. Re-run start-ticket, or continue with current setup"
+    echo ""
+    echo -e "${YELLOW} Proceeding with fallback domain 'tickets' for now...${NC}"
+    
+    domain="tickets"
+    base_path="."
+    domain_folder="$base_path/$domain"
 fi
+
+# Ensure domain exists
+ensure_domain_exists "$domain_folder"
 
 # Step 2: Copy ticket to domain folder
 echo -e "\n${FOLDER} Step 2: Creating ticket documentation..."

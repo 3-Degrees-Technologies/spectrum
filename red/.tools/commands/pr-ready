@@ -18,14 +18,14 @@ PR="🔀"
 echo -e "${PR} ${BLUE}PR READY${NC}: Automated quality validation and Pull Request creation"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+if [[ ! -f ".tmp/current-ticket.json" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
-    echo -e "${INFO} Please run './.spectrum-dev/spectrum-dev start-ticket' first"
+    echo -e "${INFO} Please run './.tools/commands/start-ticket' first"
     exit 1
 fi
 
 # Load current ticket context
-ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_info=$(cat .tmp/current-ticket.json)
 ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
 ticket_title=$(echo "$ticket_info" | jq -r '.title')
 domain=$(echo "$ticket_info" | jq -r '.domain')
@@ -164,12 +164,12 @@ if [[ "$merge_base" != "$dev_head" ]]; then
     echo "  2. Pull latest: ${BLUE}git pull origin dev${NC}" 
     echo "  3. Switch back: ${BLUE}git checkout $branch${NC}"
     echo "  4. Rebase on dev: ${BLUE}git rebase dev${NC}"
-    echo "  5. Rerun pr-ready: ${BLUE}./.spectrum-dev/spectrum-dev pr-ready${NC}"
+    echo "  5. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
     echo ""
     echo -e "${INFO} Alternatively, merge dev into your branch:"
     echo "  1. Merge dev: ${BLUE}git merge origin/dev${NC}"
     echo "  2. Resolve any conflicts if they occur"
-    echo "  3. Rerun pr-ready: ${BLUE}./.spectrum-dev/spectrum-dev pr-ready${NC}"
+    echo "  3. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
     exit 1
 fi
 
@@ -286,7 +286,7 @@ if ! gh pr create --base dev --head "$branch" --title "$ticket_id: $ticket_title
         repo_url="https://github.com/$(git remote get-url origin | sed 's/.*github.com[:/]//' | sed 's/.git$//')"
         echo "  4. Create PR manually at: $repo_url/pull/new/$branch"
         echo "  5. After creating PR manually, update workflow state:"
-        echo "     jq '.phase = \"pr-created\" | .pr_url = \"YOUR_PR_URL\"' .spectrum/current-ticket.json > tmp && mv tmp .spectrum/current-ticket.json"
+        echo "     jq '.phase = \"pr-created\" | .pr_url = \"YOUR_PR_URL\"' .tmp/current-ticket.json > tmp && mv tmp .tmp/current-ticket.json"
         echo ""
         echo -e "${INFO} Quality gates passed - branch is ready for PR creation"
         exit 1
@@ -305,8 +305,8 @@ jq '.phase = "pr-created" | .pr_created_at = now | .pr_created_at |= todate | .p
    --arg url "$pr_url" \
    --arg files "$files_changed" \
    --arg tests "$test_passed" \
-   .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+   .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
 
 echo -e "\n${SUCCESS} ${GREEN}PULL REQUEST CREATED SUCCESSFULLY${NC}"
 echo -e "${INFO} Summary:"
@@ -322,11 +322,11 @@ echo -e "${INFO} ${GREEN}Automatically starting PR monitoring...${NC}"
 echo ""
 
 # Automatically start PR monitoring
-./.spectrum-dev/spectrum-dev pr-monitor
+./.tools/commands/pr-monitor
 
 echo ""
 echo -e "${INFO} ${YELLOW}Phase 3 (after merge):${NC}"
-echo "  1. 🧹 Clean up: ./.spectrum-dev/spectrum-dev pr-cleanup (after PR merged)"
+echo "  1. 🧹 Clean up: ./.tools/commands/pr-cleanup (after PR merged)"
 echo ""
 echo -e "${YELLOW} 🛡️ Branch Protection: PR correctly targets 'dev' branch (staging deployment)${NC}"
 echo -e "${INFO} 🎯 Quality Assurance: Pre-commit hooks will continue enforcing standards"

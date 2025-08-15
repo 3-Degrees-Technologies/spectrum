@@ -21,7 +21,7 @@ echo -e "${TEST} ${GREEN}TDD GREEN CYCLE${NC}: Making the test pass"
 tdd_state_file=".spectrum/tdd/current-cycle.json"
 if [[ ! -f "$tdd_state_file" ]]; then
     echo -e "${ERROR} No active TDD cycle found"
-    echo -e "${INFO} Please run './.spectrum-dev/spectrum-dev tdd-red \"test description\"' first"
+    echo -e "${INFO} Please run './.tools/commands/tdd-red \"test description\"' first"
     exit 1
 fi
 
@@ -152,7 +152,7 @@ echo "  Test: $test_description"
 echo "  Status: ✅ Test now passes with minimal implementation"
 echo ""
 echo -e "${INFO} Next step:"
-echo -e "${BLUE}  Run: ./.spectrum-dev/spectrum-dev tdd-commit 'Implement $test_description'${NC}"
+echo -e "${BLUE}  Run: ./.tools/commands/tdd-commit 'Implement $test_description'${NC}"
 echo "  This will guide you through REFACTOR phase and commit the working cycle"
 echo ""
 echo -e "${YELLOW} Remember: REFACTOR phase is for improving code quality without changing functionality${NC}"

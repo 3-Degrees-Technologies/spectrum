@@ -18,8 +18,8 @@ COMMIT="💾"
 commit_message="$1"
 
 if [[ -z "$commit_message" ]]; then
-    echo -e "${ERROR} Usage: ./.spectrum-dev/spectrum-dev tdd-commit 'commit message'"
-    echo "Example: ./.spectrum-dev/spectrum-dev tdd-commit 'Implement balance retrieval for valid account'"
+    echo -e "${ERROR} Usage: ./.tools/commands/tdd-commit 'commit message'"
+    echo "Example: ./.tools/commands/tdd-commit 'Implement balance retrieval for valid account'"
     exit 1
 fi
 
@@ -206,8 +206,8 @@ echo "  Commit: $commit_message"
 echo "  Status: ✅ Working increment saved"
 echo ""
 echo -e "${INFO} Next options:"
-echo -e "${BLUE}  Continue TDD: ./.spectrum-dev/spectrum-dev tdd-red 'next test description'${NC}"
-echo -e "${BLUE}  Check status: ./.spectrum-dev/spectrum-dev status${NC}"
-echo -e "${BLUE}  Create PR: ./.spectrum-dev/spectrum-dev pr-ready${NC}"
+echo -e "${BLUE}  Continue TDD: ./.tools/commands/tdd-red 'next test description'${NC}"
+echo -e "${BLUE}  Check status: ./.tools/commands/status${NC}"
+echo -e "${BLUE}  Create PR: ./.tools/commands/pr-ready${NC}"
 echo ""
 echo -e "${YELLOW} TDD Success Pattern: Each cycle builds incrementally toward complete feature${NC}"

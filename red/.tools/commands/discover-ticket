@@ -38,7 +38,7 @@ if [[ -f "$TICKET_INFO_FILE" ]]; then
     echo ""
     echo -e "${SUCCESS} Using existing ticket info"
     echo -e "${INFO} Ready for context reset and implementation phase"
-    echo -e "${RESET} Next: Run ${YELLOW}.spectrum-dev/spectrum-dev start-ticket${NC}"
+    echo -e "${RESET} Next: Run ${YELLOW}.tools/commands/start-ticket${NC}"
     exit 0
 fi
 
@@ -218,7 +218,7 @@ echo -e "${INFO} Discovery phase complete - ticket data prepared"
 echo -e "${INFO} Now ready for clean implementation phase"
 echo ""
 echo -e "${YELLOW}Next Steps:${NC}"
-echo -e "${RESET} 1. Run: ${BLUE}.spectrum-dev/spectrum-dev start-ticket${NC} (clean implementation)"
+echo -e "${RESET} 1. Run: ${BLUE}.tools/commands/start-ticket${NC} (clean implementation)"
 echo -e "${RESET} 2. Optional: Clear conversation context manually if desired"
 echo ""
 echo -e "${SUCCESS} Ready for focused implementation!"

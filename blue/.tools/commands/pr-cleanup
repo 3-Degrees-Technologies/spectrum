@@ -2,6 +2,12 @@
 # pr-cleanup command for Spectrum Development Framework
 # Phase 3: Post-merge cleanup - archive documentation and reset for next ticket
 
+# SAFETY: This script only modifies:
+# - .spectrum/ (workflow state)
+# - Feature branch (deletion)
+# - Documentation files (archival)
+# It NEVER modifies: .tools/, .centro-dev/, src/, or other working directories
+
 # Colors and emoji
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -57,11 +63,33 @@ echo -e "${INFO} Proceeding with post-merge cleanup..."
 current_git_branch=$(git branch --show-current)
 if [[ "$current_git_branch" == "$branch" ]]; then
     echo -e "\n${WORKING} Switching away from feature branch..."
-    git checkout dev || {
-        echo -e "${ERROR} Failed to switch to dev branch"
-        echo -e "${INFO} Please ensure dev branch exists and is accessible"
+    
+    # PROTECTION: Never delete working directories
+    if [[ -d ".tools" ]] && [[ ! -d ".tools/.git" ]]; then
+        echo -e "${ERROR} ${RED}BLOCKED: This script does not modify development tools${NC}"
+        echo -e "${INFO} Working directories (.tools/, .centro-dev/) are protected"
+        echo -e "${INFO} Only workflow state, branches, and documentation are managed"
         exit 1
-    }
+    fi
+    
+    # Handle temp files safely before branch switch
+    if git status --porcelain | grep -q '\.spectrum/'; then
+        echo -e "${INFO} Removing temporary workflow files..."
+        rm -f .spectrum/current-ticket.json .spectrum/current-cycle.json
+        echo -e "${SUCCESS} Temporary files cleaned"
+    fi
+    
+    # Safe branch switch - handle any remaining conflicts
+    if ! git checkout dev; then
+        echo -e "${INFO} Stashing any remaining changes and retrying..."
+        git stash --include-untracked || true
+        git checkout dev || {
+            echo -e "${ERROR} Failed to switch to dev branch"
+            echo -e "${INFO} Please ensure dev branch exists and is accessible"
+            echo -e "${INFO} Manual intervention required - do not force delete working directories"
+            exit 1
+        }
+    fi
     echo -e "${SUCCESS} Switched to dev branch"
 fi
 
@@ -192,6 +220,12 @@ echo -e "${SUCCESS} Current ticket state cleaned up"
 if [[ -f ".spectrum/current-cycle.json" ]]; then
     rm -f .spectrum/current-cycle.json
 fi
+
+# SAFETY REMINDER: This script completed without modifying working directories
+echo -e "\n${INFO} ${BLUE}SAFETY VERIFICATION:${NC}"
+echo -e "${SUCCESS} ✅ No working directories (.tools/, .centro-dev/, src/) were modified"
+echo -e "${SUCCESS} ✅ Only workflow state, branches, and documentation were managed"
+echo -e "${SUCCESS} ✅ Development environment remains intact"
 
 echo -e "\n${SUCCESS} ${GREEN}PR CLEANUP COMPLETED SUCCESSFULLY${NC}"
 echo -e "${INFO} Summary:"

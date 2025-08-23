@@ -18,14 +18,14 @@ FEEDBACK="💬"
 echo -e "${MONITOR} ${BLUE}PR MONITOR${NC}: Monitoring PR feedback and CI/CD status"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".spectrum/current-ticket.json" ]]; then
+if [[ ! -f ".tmp/current-ticket.json" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
-    echo -e "${INFO} Please ensure you've created a PR with './.spectrum-dev/spectrum-dev pr-ready' first"
+    echo -e "${INFO} Please ensure you've created a PR with './.tools/commands/pr-ready' first"
     exit 1
 fi
 
 # Load current ticket context
-ticket_info=$(cat .spectrum/current-ticket.json)
+ticket_info=$(cat .tmp/current-ticket.json)
 ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
 ticket_title=$(echo "$ticket_info" | jq -r '.title')
 pr_url=$(echo "$ticket_info" | jq -r '.pr_url // empty')
@@ -61,15 +61,15 @@ fi
 echo -e "${INFO} Repository: $repo_owner/$repo_name (PR #$pr_number)"
 
 # Update ticket state to monitoring phase
-jq '.phase = "pr-monitoring" | .monitoring_started = now | .monitoring_started |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+jq '.phase = "pr-monitoring" | .monitoring_started = now | .monitoring_started |= todate' .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
 
 echo -e "\n${MONITOR} ${YELLOW}Using Cotejar tools for comprehensive PR monitoring:${NC}"
 echo ""
 
 # Phase 2a: Get PR Summary
 echo -e "${WORKING} Getting PR summary..."
-echo -e "${INFO} ${YELLOW}AI Agent: Getting comprehensive PR status with Cotejar CLI:${NC}"
+echo -e "${INFO} ${YELLOW}AI Agent: Getting comprehensive PR status with Cotejar tools:${NC}"
 echo ""
 echo -e "${YELLOW}=== REQUIRED: Use Cotejar PR Summary Tool ===${NC}"
 echo -e "${INFO} Run this command to get overall PR health:"
@@ -123,7 +123,7 @@ if [[ "$has_blocking_issues" == "y" || "$has_blocking_issues" == "Y" ]]; then
     echo "  # For failed GitHub Actions:"
     echo "  cotejar workflows $repo_owner/$repo_name#$pr_number"
     echo ""
-    echo "  # For comprehensive feedback:"
+    echo "  # For review conversations:"
     echo "  cotejar feedback $repo_owner/$repo_name#$pr_number"
     echo ""
     
@@ -134,24 +134,24 @@ if [[ "$has_blocking_issues" == "y" || "$has_blocking_issues" == "Y" ]]; then
     echo -e "\n${INFO} ${GREEN}Fix Iteration Workflow:${NC}"
     echo ""
     echo -e "${YELLOW}1. Address Issues Using TDD (if code changes needed):${NC}"
-    echo "   ./.spectrum-dev/spectrum-dev tdd-red 'fix specific issue'"
-    echo "   ./.spectrum-dev/spectrum-dev tdd-green"
-    echo "   ./.spectrum-dev/spectrum-dev tdd-commit 'Fix: issue description'"
+    echo "   ./.tools/commands/tdd-red 'fix specific issue'"
+    echo "   ./.tools/commands/tdd-green"
+    echo "   ./.tools/commands/tdd-commit 'Fix: issue description'"
     echo ""
     echo -e "${YELLOW}2. Push Updates:${NC}"
     echo "   git push origin $(git branch --show-current)"
     echo "   (Pre-commit hooks will enforce quality automatically)"
     echo ""
     echo -e "${YELLOW}3. Monitor Again:${NC}"
-    echo "   ./.spectrum-dev/spectrum-dev pr-monitor"
+    echo "   ./.tools/commands/pr-monitor"
     echo ""
     echo -e "${YELLOW}4. Mark Conversations Resolved (if applicable):${NC}"
     echo "   cotejar resolve --repo $repo_owner/$repo_name#$pr_number <thread-id>"
     echo ""
     
     # Update state to iteration mode
-    jq '.phase = "pr-iteration" | .iteration_started = now | .iteration_started |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-    mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+    jq '.phase = "pr-iteration" | .iteration_started = now | .iteration_started |= todate' .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+    mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
     
     echo -e "${INFO} ${BLUE}Status updated to: PR Iteration Mode${NC}"
     echo -e "${SUCCESS} Re-run this command after making fixes to continue monitoring"
@@ -178,8 +178,8 @@ else
     
     if [[ "$ready_for_merge" == "y" || "$ready_for_merge" == "Y" ]]; then
         # Update state to ready for merge
-        jq '.phase = "pr-ready-for-merge" | .ready_for_merge_at = now | .ready_for_merge_at |= todate' .spectrum/current-ticket.json > .spectrum/current-ticket.json.tmp
-        mv .spectrum/current-ticket.json.tmp .spectrum/current-ticket.json
+        jq '.phase = "pr-ready-for-merge" | .ready_for_merge_at = now | .ready_for_merge_at |= todate' .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
+        mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
         
         echo -e "\n${SUCCESS} ${GREEN}PR READY FOR MERGE${NC}"
         echo -e "${INFO} Summary:"
@@ -192,16 +192,16 @@ else
         echo -e "${INFO} ${GREEN}Next steps:${NC}"
         echo "  1. 👥 Coordinate with team for PR merge"
         echo "  2. 🚀 Wait for merge to dev → staging deployment"
-        echo "  3. 🧹 After merge: ./.spectrum-dev/spectrum-dev pr-cleanup"
+        echo "  3. 🧹 After merge: ./.tools/commands/pr-cleanup"
         echo ""
         echo -e "${YELLOW} Note: PR cleanup should only be done AFTER the PR is merged${NC}"
         
     else
         echo -e "\n${INFO} ${YELLOW}PR not yet ready for merge${NC}"
         echo -e "${INFO} Continue monitoring and addressing feedback as needed"
-        echo -e "${INFO} Re-run './.spectrum-dev/spectrum-dev pr-monitor' when status changes"
+        echo -e "${INFO} Re-run './.tools/commands/pr-monitor' when status changes"
     fi
 fi
 
 echo -e "\n${MONITOR} ${BLUE}PR monitoring session complete${NC}"
-echo -e "${INFO} Current status: $(jq -r '.phase' .spectrum/current-ticket.json)"
+echo -e "${INFO} Current status: $(jq -r '.phase' .tmp/current-ticket.json)"

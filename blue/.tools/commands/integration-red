@@ -1,0 +1,176 @@
+#!/bin/bash
+# integration-red command for Centro Development Framework
+# Implements: Integration Test RED cycle - Write ONE NEW failing integration test
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+TEST="🧪"
+INTEGRATION="🔗"
+
+test_description="$1"
+
+if [[ -z "$test_description" ]]; then
+    echo -e "${ERROR} Usage: ./integration-red 'integration test description'"
+    echo "Example: ./integration-red 'Lambda should process DynamoDB events'"
+    exit 1
+fi
+
+echo -e "${TEST} ${RED}INTEGRATION RED CYCLE${NC}: Writing failing integration test"
+echo -e "${INFO} Test: $test_description"
+
+# Interactive prompts for integration test creation
+echo -e "\n${INTEGRATION} ${YELLOW}Integration Test Setup${NC}"
+
+# 1. Service type
+echo -e "${INFO} What service are you testing?"
+echo "1) Lambda function"
+echo "2) DynamoDB operations" 
+echo "3) API Gateway endpoint"
+echo "4) LocalStack health check"
+echo "5) Other AWS service"
+read -p "Select service type (1-5): " service_type
+
+# 2. Test collection
+echo -e "\n${INFO} Which Bruno collection should contain this test?"
+echo "1) bruno/LocalStack/ (LocalStack integration tests)"
+echo "2) bruno/Centro API Local/ (Local API tests)"
+echo "3) bruno/Centro API Dev/ (Dev environment tests)"
+echo "4) Create new collection"
+read -p "Select collection (1-4): " collection_choice
+
+# 3. Test scenario type
+echo -e "\n${INFO} What type of test scenario?"
+echo "1) Happy path (successful operation)"
+echo "2) Error handling (failure scenarios)"
+echo "3) Edge cases (boundary conditions)"
+echo "4) Performance/timing"
+read -p "Select scenario type (1-4): " scenario_type
+
+# 4. Validation approach
+echo -e "\n${INFO} How should the test validate success?"
+echo "1) HTTP response code and body"
+echo "2) Database state changes"
+echo "3) Lambda function invocation"
+echo "4) Service health/status"
+echo "5) Multiple validations"
+read -p "Select validation approach (1-5): " validation_type
+
+# Determine collection path
+case $collection_choice in
+    1) collection_path="bruno/LocalStack" ;;
+    2) collection_path="bruno/Centro API Local" ;;
+    3) collection_path="bruno/Centro API Dev" ;;
+    4) 
+        read -p "Enter new collection name: " custom_collection
+        collection_path="bruno/$custom_collection"
+        mkdir -p "$collection_path"
+        ;;
+esac
+
+# Generate test file name
+test_file_name=$(echo "$test_description" | sed 's/[^a-zA-Z0-9 ]//g' | sed 's/ /_/g' | sed 's/__*/_/g').bru
+test_file_path="$collection_path/$test_file_name"
+
+echo -e "\n${WORKING} Generating integration test template..."
+
+# Generate Bruno test template based on service type
+case $service_type in
+    1) # Lambda function
+        cat > "$test_file_path" << EOF
+meta {
+  name: $test_description
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{localstackUrl}}/_localstack/health
+  body: none
+  auth: none
+}
+
+headers {
+}
+
+tests {
+  // Integration RED: Write failing test for Lambda function
+  test("$test_description", function() {
+    // TODO: Write failing assertion for Lambda functionality
+    // This test should fail until Lambda function is properly deployed/configured
+    
+    expect(false).to.equal(true); // FAILING TEST - replace with real assertion
+    
+    // Suggestions for Lambda testing:
+    // - Check Lambda function exists: expect(response.lambda_functions).to.include('function-name');
+    // - Test Lambda invocation: call Lambda invoke API
+    // - Validate Lambda response: expect(lambda_result.StatusCode).to.equal(200);
+  });
+}
+
+docs {
+  Integration Test RED Phase
+  
+  Purpose: $test_description
+  Service: Lambda function
+  Scenario: Happy path/Error handling/Edge cases/Performance
+  Validation: HTTP response/Database state/Lambda invocation/Service health/Multiple
+  
+  Next: Run this test - it should FAIL
+  Then: Use integration-green to make it pass
+}
+EOF
+        ;;
+    *) # Other services - simplified template
+        cat > "$test_file_path" << EOF
+meta {
+  name: $test_description
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{localstackUrl}}/_localstack/health
+  body: none
+  auth: none
+}
+
+headers {
+}
+
+tests {
+  // Integration RED: Write failing test
+  test("$test_description", function() {
+    // TODO: Write failing assertion for integration functionality
+    
+    expect(false).to.equal(true); // FAILING TEST - replace with real assertion
+    
+    // TODO: Replace with appropriate assertions for your service
+  });
+}
+
+docs {
+  Integration Test RED Phase
+  
+  Purpose: $test_description
+  
+  Next: Run this test - it should FAIL
+  Then: Use integration-green to make it pass
+}
+EOF
+        ;;
+esac
+
+echo -e "${SUCCESS} Integration test template created: $test_file_path"
+echo -e "\n${INFO} Next steps:"
+echo -e "  1. Edit the test file: $test_file_path"
+echo -e "  2. Replace the failing assertion with real test logic"
+echo -e "  3. Run the test - it should FAIL"
+echo -e "  4. Use: ./integration-green to make it pass"

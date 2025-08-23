@@ -38,7 +38,7 @@ if [[ -f "$TICKET_INFO_FILE" ]]; then
     echo ""
     echo -e "${SUCCESS} Using existing ticket info"
     echo -e "${INFO} Ready for context reset and implementation phase"
-    echo -e "${RESET} Next: Run ${YELLOW}.spectrum-dev/spectrum-dev start-ticket${NC}"
+    echo -e "${RESET} Next: Run ${YELLOW}.tools/commands/start-ticket${NC}"
     exit 0
 fi
 
@@ -47,7 +47,7 @@ echo -e "${SEARCH} Step 1: Automated Ticket Discovery"
 echo -e "${INFO} ${YELLOW}=== AUTOMATED AI AGENT DISCOVERY ===${NC}"
 echo ""
 
-# Get recent Slack messages
+# Get recent Slack messages (exclude ones I've already reacted to)
 echo -e "${WORKING} Checking Slack for ticket assignments..."
 python3 .tools/slack_rest_client.py get_relevant_messages 10 > "$SPECTRUM_TMP_DIR/slack_messages.json"
 
@@ -56,17 +56,34 @@ if [[ ! -s "$SPECTRUM_TMP_DIR/slack_messages.json" ]]; then
     exit 1
 fi
 
-# Parse messages for ticket assignments - prioritize newest first
-echo -e "${WORKING} Searching for ticket assignments..."
-ticket_assignment=$(jq -r '.result.messages[] | select(.text | test("[A-Z]+-[0-9]+")) | select(.text | test("assigned|Assignment|assignment|ready for.*implementation|ready for.*work|In Progress.*ready"; "i")) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
+# Parse messages for MY ticket assignments - prioritize newest first  
+echo -e "${WORKING} Searching for my ticket assignments..."
+
+# Get my agent name and user ID for filtering
+my_agent_name=$(python3 .tools/slack_rest_client.py detect_agent | jq -r '.agent_name // "Agent-Sam"' 2>/dev/null || echo "Agent-Sam")
+my_user_id=$(python3 .tools/slack_rest_client.py get_relevant_messages 1 | jq -r '.bot_user_id // "U096VLDAHJ5"' 2>/dev/null || echo "U096VLDAHJ5")
+
+# Look for assignments TO ME that I haven't already completed (check both user ID and agent name)
+# Exclude congratulatory messages and look specifically for assignment language
+ticket_assignment=$(jq -r --arg agent "$my_agent_name" --arg userid "$my_user_id" '.result.messages[] | select(.user_name == "Agent-Knowledge") | select(.text | (contains($agent) or contains($userid)) and test("[A-Z]+-[0-9]+")) | select(.text | test("New Assignment|assigned.*[A-Z]+-[0-9]+|Assignment.*[A-Z]+-[0-9]+|ready for.*implementation|ready for.*work|In Progress.*ready"; "i")) | select(.text | test("Excellent|Great|congratulations|completed|done|finished"; "i") | not) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
 
 if [[ -z "$ticket_assignment" || "$ticket_assignment" == "null" ]]; then
-    echo -e "${ERROR} No ticket assignment found in recent messages"
-    echo -e "${INFO} Recent messages summary:"
-    jq -r '.result.messages[]? | "  " + .user_name + ": " + (.text | .[0:100])' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null || echo "  No messages found"
-    echo ""
-    echo -e "${INFO} Waiting for ticket assignment from Agent-Green..."
-    exit 1
+    echo -e "${INFO} No new ticket assignment found for me"
+    echo -e "${INFO} Checking if I have any incomplete assignments..."
+    
+    # Check for any tickets I was assigned but may not have completed
+    incomplete_assignment=$(jq -r --arg agent "$my_agent_name" --arg userid "$my_user_id" '.result.messages[] | select(.user_name == "Agent-Knowledge") | select(.text | (contains($agent) or contains($userid)) and test("[A-Z]+-[0-9]+")) | select(.text | test("New Assignment|assigned.*[A-Z]+-[0-9]+|Assignment.*[A-Z]+-[0-9]+"; "i")) | select(.text | test("Excellent|Great|congratulations|completed|done|finished"; "i") | not) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
+    
+    if [[ -z "$incomplete_assignment" || "$incomplete_assignment" == "null" ]]; then
+        echo -e "${INFO} No assignments found. Requesting new ticket from Agent-Knowledge..."
+        python3 .tools/slack_rest_client.py send_message "@Agent-Knowledge Ready for next ticket assignment. CEN-491 completed and merged. What should I work on next?"
+        echo -e "${SUCCESS} Requested new ticket assignment from Agent-Knowledge"
+        echo -e "${INFO} Please wait for assignment and re-run discover-ticket"
+        exit 0
+    else
+        ticket_assignment="$incomplete_assignment"
+        echo -e "${INFO} Found existing assignment to review: $incomplete_assignment"
+    fi
 fi
 
 echo -e "${SUCCESS} Found ticket assignment:"
@@ -85,11 +102,29 @@ if [[ -n "$detected_project_code" && "$detected_project_code" != "$PROJECT_CODE"
     # SPECTRUM_TMP_DIR and TICKET_INFO_FILE remain unchanged (using .tmp)
 fi
 
-ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*\([A-Z]\+-[0-9]\+\)[^:]*: *\(.*\)/\2/p' | head -n 1)
+# Extract ticket title - look for "assigned: Title" pattern first
+ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*assigned: *\(.*\)/\1/p' | head -n 1)
 
 if [[ -z "$ticket_title" ]]; then
-    # Try alternative extraction patterns
+    # Try alternative pattern with ticket ID and colon
+    ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*\([A-Z]\+-[0-9]\+\)[^:]*: *\(.*\)/\2/p' | head -n 1)
+fi
+
+if [[ -z "$ticket_title" ]]; then
+    # Try alternative extraction patterns - looking for "assigned: *Title*"
+    ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*assigned: *\*\(.*\)\*.*/\1/p' | head -n 1)
+fi
+
+if [[ -z "$ticket_title" ]]; then
+    # Try pattern for "assigned: **Title**"
     ticket_title=$(echo "$ticket_assignment" | sed -n 's/.*assigned: *\*\*\(.*\)\*\*.*/\1/p' | head -n 1)
+fi
+
+if [[ -z "$ticket_title" ]]; then
+    # Try extracting from file attachment name if available
+    if [[ -n "$attachment_found" ]]; then
+        ticket_title=$(jq -r '.result.messages[] | select(.files and (.files | length > 0)) | .files[0].name // empty' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1 | sed 's/^[A-Z]\+-[0-9]\+_//; s/\.md$//; s/_/ /g')
+    fi
 fi
 
 if [[ -z "$ticket_title" ]]; then
@@ -145,6 +180,18 @@ fi
 
 echo -e "${WORKING} Creating ticket info file..."
 
+# Extract actual title from ticket file if available
+if [[ -f "$ticket_file_path" && -s "$ticket_file_path" ]]; then
+    # Try to extract title from the first line if it's a markdown header
+    file_title=$(head -n 1 "$ticket_file_path" | sed 's/^# *//' | sed 's/^## *//')
+    
+    # If we found a meaningful title from the file, use it
+    if [[ -n "$file_title" && "$file_title" != "Ticket Assignment Details" && ${#file_title} -gt 5 ]]; then
+        echo -e "${INFO} Using title from ticket file: $file_title"
+        ticket_title="$file_title"
+    fi
+fi
+
 # Create the ticket info JSON file
 cat > "$TICKET_INFO_FILE" << EOF
 {
@@ -159,6 +206,17 @@ EOF
 
 echo -e "${SUCCESS} Created ticket info file: $TICKET_INFO_FILE"
 echo ""
+
+# Acknowledge the assignment by reacting to the message
+echo -e "${WORKING} Acknowledging ticket assignment..."
+assignment_timestamp=$(jq -r --arg agent "$my_agent_name" --arg userid "$my_user_id" '.result.messages[] | select(.user_name == "Agent-Knowledge") | select(.text | (contains($agent) or contains($userid)) and test("[A-Z]+-[0-9]+")) | select(.text | test("assigned|Assignment|assignment|New Assignment|ready for.*implementation|ready for.*work|In Progress.*ready"; "i")) | .timestamp' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
+
+if [[ -n "$assignment_timestamp" && "$assignment_timestamp" != "null" ]]; then
+    python3 .tools/slack_rest_client.py add_reaction "$assignment_timestamp" "eyes" > /dev/null 2>&1
+    echo -e "${SUCCESS} Acknowledged assignment with reaction"
+else
+    echo -e "${INFO} Could not find message timestamp for acknowledgment"
+fi
 
 # Clean up temp files
 rm -f "$SPECTRUM_TMP_DIR/slack_messages.json"
@@ -218,7 +276,7 @@ echo -e "${INFO} Discovery phase complete - ticket data prepared"
 echo -e "${INFO} Now ready for clean implementation phase"
 echo ""
 echo -e "${YELLOW}Next Steps:${NC}"
-echo -e "${RESET} 1. Run: ${BLUE}.spectrum-dev/spectrum-dev start-ticket${NC} (clean implementation)"
+echo -e "${RESET} 1. Run: ${BLUE}.tools/commands/start-ticket${NC} (clean implementation)"
 echo -e "${RESET} 2. Optional: Clear conversation context manually if desired"
 echo ""
 echo -e "${SUCCESS} Ready for focused implementation!"

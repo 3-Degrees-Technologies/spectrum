@@ -1,0 +1,156 @@
+#!/bin/bash
+# integration-refactor command for Centro Development Framework
+# Implements: Integration Test REFACTOR cycle - Enhance and clean up the test
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+TEST="🧪"
+INTEGRATION="🔗"
+
+echo -e "${TEST} ${BLUE}INTEGRATION REFACTOR CYCLE${NC}: Enhancing the test"
+
+# Check if we have a test state
+if [[ ! -f ".tmp/integration-test-state.json" ]]; then
+    echo -e "${ERROR} No integration test state found. Please run ./integration-red first"
+    exit 1
+fi
+
+# Read test state
+test_file=$(jq -r '.test_file' .tmp/integration-test-state.json)
+test_description=$(jq -r '.test_description' .tmp/integration-test-state.json)
+phase=$(jq -r '.phase' .tmp/integration-test-state.json)
+
+echo -e "${INFO} Test: $test_description"
+echo -e "${INFO} File: $test_file"
+echo -e "${INFO} Current phase: $phase"
+
+if [[ "$phase" != "green" ]]; then
+    echo -e "${ERROR} Test is not in GREEN phase. Please run ./integration-green first"
+    exit 1
+fi
+
+echo -e "\n${INTEGRATION} ${YELLOW}Integration Test Refactoring Options${NC}"
+
+echo -e "${INFO} What would you like to enhance?"
+echo "1) Add more comprehensive assertions"
+echo "2) Add error handling and edge cases"
+echo "3) Add performance/timing validation"
+echo "4) Add better test documentation"
+echo "5) Add setup/teardown steps"
+echo "6) Add multiple test scenarios"
+echo "7) All of the above"
+read -p "Select enhancement (1-7): " enhancement_choice
+
+echo -e "\n${WORKING} Refactoring suggestions:"
+
+case $enhancement_choice in
+    1|7) # More assertions
+        echo -e "${INFO} Add comprehensive assertions:"
+        echo -e "  ✅ Validate all required response fields"
+        echo -e "  ✅ Check data types and formats"
+        echo -e "  ✅ Verify business logic correctness"
+        echo -e "  ✅ Test boundary conditions"
+        ;;
+esac
+
+case $enhancement_choice in
+    2|7) # Error handling
+        echo -e "${INFO} Add error handling tests:"
+        echo -e "  ❌ Test invalid inputs"
+        echo -e "  ❌ Test service unavailable scenarios"
+        echo -e "  ❌ Test timeout conditions"
+        echo -e "  ❌ Test malformed requests"
+        ;;
+esac
+
+case $enhancement_choice in
+    3|7) # Performance
+        echo -e "${INFO} Add performance validation:"
+        echo -e "  ⏱️ Measure response times"
+        echo -e "  ⏱️ Test under load"
+        echo -e "  ⏱️ Validate timeout handling"
+        ;;
+esac
+
+case $enhancement_choice in
+    4|7) # Documentation
+        echo -e "${INFO} Enhance documentation:"
+        echo -e "  📝 Add clear test purpose"
+        echo -e "  📝 Document expected behavior"
+        echo -e "  📝 Add troubleshooting notes"
+        echo -e "  📝 Document dependencies"
+        ;;
+esac
+
+case $enhancement_choice in
+    5|7) # Setup/teardown
+        echo -e "${INFO} Add setup/teardown:"
+        echo -e "  🔧 Pre-test environment setup"
+        echo -e "  🔧 Test data preparation"
+        echo -e "  🔧 Post-test cleanup"
+        echo -e "  🔧 Resource management"
+        ;;
+esac
+
+case $enhancement_choice in
+    6|7) # Multiple scenarios
+        echo -e "${INFO} Add test scenarios:"
+        echo -e "  🎯 Happy path variations"
+        echo -e "  🎯 Different input combinations"
+        echo -e "  🎯 Various user contexts"
+        echo -e "  🎯 Different environment states"
+        ;;
+esac
+
+echo -e "\n${INFO} Refactoring guidelines:"
+echo -e "  1. Keep tests focused and single-purpose"
+echo -e "  2. Make assertions clear and descriptive"
+echo -e "  3. Add meaningful console.log() for debugging"
+echo -e "  4. Use consistent naming conventions"
+echo -e "  5. Document test dependencies and setup requirements"
+
+echo -e "\n${INFO} Example refactored test structure:"
+cat << 'EOF'
+tests {
+  test("Service should be healthy and operational", function() {
+    // Validate basic health
+    expect(res.getStatus()).to.equal(200);
+    
+    // Validate response structure
+    const body = res.getBody();
+    expect(body).to.have.property('services');
+    
+    // Validate specific service status
+    expect(body.services.lambda).to.equal('running');
+    
+    // Log for debugging
+    console.log("✅ Lambda service operational");
+    console.log("🔍 Available services:", Object.keys(body.services));
+  });
+  
+  test("Service should handle errors gracefully", function() {
+    // Add error scenario testing
+  });
+}
+EOF
+
+echo -e "\n${TEST} After refactoring:"
+echo -e "  1. Run the test to ensure it still passes"
+echo -e "  2. Verify all new assertions work correctly" 
+echo -e "  3. Check that error scenarios fail appropriately"
+echo -e "  4. Review test documentation completeness"
+
+# Update test state
+jq '.phase = "refactor"' .tmp/integration-test-state.json > .tmp/integration-test-state.json.tmp
+mv .tmp/integration-test-state.json.tmp .tmp/integration-test-state.json
+
+echo -e "\n${SUCCESS} Integration test ready for refactoring!"
+echo -e "${INFO} Edit: $test_file"

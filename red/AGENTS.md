@@ -36,7 +36,7 @@ Centro uses an executable process framework (`.centro-dev/`) that automates and 
 **Ticket Workflow**:
 
 ```bash
-.spectrum-dev/spectrum-dev discover-ticket  # Phase 1: Extract ticket from Slack
+.tools/spectrum-dev discover-ticket  # Phase 1: Extract ticket from Slack
 # Optional: Clear context manually
 .spectrum-dev/spectrum-dev start-ticket     # Phase 2: Set up workspace (clean context)
 ```
@@ -44,23 +44,32 @@ Centro uses an executable process framework (`.centro-dev/`) that automates and 
 **TDD Cycle Commands**:
 
 ```bash
-.spectrum-dev/spectrum-dev tdd-red     # Write ONE failing test
-.spectrum-dev/spectrum-dev tdd-green   # Minimal implementation to pass
-.spectrum-dev/spectrum-dev tdd-commit  # Optional refactor + automated commit
+.tools/spectrum-dev tdd-red 'test description'     # Write ONE failing test
+.tools/spectrum-dev tdd-green                      # Minimal implementation to pass
+.tools/spectrum-dev tdd-refactor                   # Apply quality improvements (optional)
+.tools/spectrum-dev tdd-commit 'commit message'    # Complete cycle and commit changes
+```
+
+**Integration Testing Commands**:
+
+```bash
+.tools/spectrum-dev integration-red 'test description'  # Write failing integration test
+.tools/spectrum-dev integration-green                   # Make integration test pass
+.tools/spectrum-dev integration-refactor                # Enhance and clean up integration test
 ```
 
 **PR Workflow (Three Phases)**:
 
 ```bash
-.spectrum-dev/spectrum-dev pr-ready    # Phase 1: Quality gates + PR creation
-.spectrum-dev/spectrum-dev pr-monitor  # Phase 2: Cotejar feedback monitoring  
-.spectrum-dev/spectrum-dev pr-cleanup  # Phase 3: Post-merge cleanup
+.tools/spectrum-dev pr-ready    # Phase 1: Quality gates + PR creation
+.tools/spectrum-dev pr-monitor  # Phase 2: Monitor feedback with automated tools  
+.tools/spectrum-dev pr-cleanup  # Phase 3: Post-merge cleanup and archival
 ```
 
 **Setup**:
 
 ```bash
-.spectrum-dev/spectrum-dev setup-hooks # Install git hooks for quality enforcement
+.tools/spectrum-dev setup-hooks # Install git hooks for quality enforcement
 ```
 
 #### Automated Quality Gates
@@ -90,9 +99,9 @@ The executable framework provides **direct prompting** - no need to memorize com
 **ALWAYS use the automated tools**:
 
 ```bash
-.spectrum-dev/spectrum-dev discover-ticket  # Handles ticket discovery with prompts
+.tools/spectrum-dev discover-ticket  # Handles ticket discovery with prompts
 # Optional: Clear context manually for clean implementation
-.spectrum-dev/spectrum-dev start-ticket     # Handles workspace setup with prompts
+.tools/spectrum-dev start-ticket     # Handles workspace setup with prompts
 ```
 
 The scripts provide **direct prompting** - no need to read documentation. Follow the interactive guidance.
@@ -100,18 +109,6 @@ The scripts provide **direct prompting** - no need to read documentation. Follow
 ### Ticket Documentation Standards
 
 **Ticket documentation is handled automatically by the framework**. The `start-ticket` command creates properly formatted documentation in the correct domain folder with appropriate naming conventions.
-
-### TDD Quick Reference
-
-**COMPLETE TDD METHODOLOGY**: See `docs/development/AI-DEVELOPMENT-GUIDE.md` Part 4 for full process.
-
-**Use the TDD commands** - they provide direct prompting:
-
-```bash
-.spectrum-dev/spectrum-dev tdd-red     # Guides you through writing failing tests
-.spectrum-dev/spectrum-dev tdd-green   # Guides you through implementation
-.spectrum-dev/spectrum-dev tdd-commit  # Handles refactor and commit
-```
 
 ### Current Team Members
 
@@ -175,7 +172,7 @@ The scripts provide **direct prompting** - no need to read documentation. Follow
 .tools/slack_rest_client.py 10
 
 # Send a message to the team
-.tools/slack_rest_client.py "Implementation complete, ready for review"
+.tools/slack_rest_client.py send_message "Implementation complete, ready for review"
 ```
 
 ### Direct Mentions
@@ -186,7 +183,7 @@ Use `@Agent-Name` in Slack to get their attention:
 - `@{AGENT_BLACK} is the deployment ready?`
 - `@{AGENT_GREEN} what's the build status?`
 
-### ## Team Protocols
+
 
 ### Git Branch Strategy
 

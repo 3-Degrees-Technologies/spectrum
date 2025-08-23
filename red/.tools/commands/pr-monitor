@@ -69,7 +69,7 @@ echo ""
 
 # Phase 2a: Get PR Summary
 echo -e "${WORKING} Getting PR summary..."
-echo -e "${INFO} ${YELLOW}AI Agent: Getting comprehensive PR status with Cotejar CLI:${NC}"
+echo -e "${INFO} ${YELLOW}AI Agent: Getting comprehensive PR status with Cotejar tools:${NC}"
 echo ""
 echo -e "${YELLOW}=== REQUIRED: Use Cotejar PR Summary Tool ===${NC}"
 echo -e "${INFO} Run this command to get overall PR health:"
@@ -123,7 +123,7 @@ if [[ "$has_blocking_issues" == "y" || "$has_blocking_issues" == "Y" ]]; then
     echo "  # For failed GitHub Actions:"
     echo "  cotejar workflows $repo_owner/$repo_name#$pr_number"
     echo ""
-    echo "  # For comprehensive feedback:"
+    echo "  # For review conversations:"
     echo "  cotejar feedback $repo_owner/$repo_name#$pr_number"
     echo ""
     

@@ -318,15 +318,10 @@ echo "  🧪 Tests: $test_passed/$test_total passing"
 echo "  🔄 TDD Cycles: $tdd_cycles completed"
 echo "  📁 Files: $files_changed changed (+$insertions -$deletions)"
 echo ""
-echo -e "${INFO} ${GREEN}Automatically starting PR monitoring...${NC}"
 echo ""
-
-# Automatically start PR monitoring
-./.tools/commands/pr-monitor
-
-echo ""
-echo -e "${INFO} ${YELLOW}Phase 3 (after merge):${NC}"
-echo "  1. 🧹 Clean up: ./.tools/commands/pr-cleanup (after PR merged)"
+echo -e "${INFO} ${YELLOW}Next Steps:${NC}"
+echo "  1. 👁️ Monitor: ./.tools/commands/pr-monitor (monitor PR feedback)"
+echo "  2. 🧹 After merge: ./.tools/commands/pr-cleanup"
 echo ""
 echo -e "${YELLOW} 🛡️ Branch Protection: PR correctly targets 'dev' branch (staging deployment)${NC}"
 echo -e "${INFO} 🎯 Quality Assurance: Pre-commit hooks will continue enforcing standards"

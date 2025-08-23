@@ -1,6 +1,6 @@
 #!/bin/bash
 # tdd-commit command for Spectrum Development Framework
-# Implements: TDD REFACTOR phase + COMMIT - Clean up code and save progress
+# Implements: TDD COMMIT phase - Save working increment with quality validation
 
 # Colors and emoji
 RED='\033[0;31m'
@@ -23,7 +23,7 @@ if [[ -z "$commit_message" ]]; then
     exit 1
 fi
 
-echo -e "${REFACTOR} ${BLUE}TDD REFACTOR & COMMIT${NC}: Clean up and save progress"
+echo -e "${COMMIT} ${GREEN}TDD COMMIT${NC}: Save working increment"
 
 # Check if we're in a TDD cycle
 tdd_state_file=".spectrum/tdd/current-cycle.json"
@@ -40,83 +40,31 @@ current_phase=$(echo "$tdd_state" | jq -r '.phase')
 test_description=$(echo "$tdd_state" | jq -r '.test_description')
 ticket_id=$(echo "$tdd_state" | jq -r '.ticket')
 
-# Validate we're coming from GREEN phase
-if [[ "$current_phase" != "green-confirmed" ]]; then
+# Validate we're coming from GREEN or REFACTOR phase
+if [[ "$current_phase" != "green-confirmed" && "$current_phase" != "refactor-completed" && "$current_phase" != "refactor-skipped" ]]; then
     echo -e "${ERROR} Invalid TDD state: $current_phase"
-    echo -e "${INFO} Expected: green-confirmed (after running tdd-green)"
+    echo -e "${INFO} Expected: green-confirmed, refactor-completed, or refactor-skipped"
     echo -e "${INFO} Current test: $test_description"
-    echo -e "${INFO} Please complete the GREEN phase first"
+    echo -e "${INFO} Please complete the GREEN phase (and optionally REFACTOR) first"
     exit 1
 fi
 
-echo -e "${INFO} TDD Cycle #$cycle_number - REFACTOR & COMMIT Phase"
+echo -e "${INFO} TDD Cycle #$cycle_number - COMMIT Phase"
 echo -e "${INFO} Ticket: ${BLUE}$ticket_id${NC}"
 echo -e "${INFO} Test: $test_description"
 echo -e "${INFO} Commit: $commit_message"
 
-# Update TDD state to REFACTOR phase
-jq '.phase = "refactor" | .refactor_started = now | .refactor_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
+# Update TDD state to COMMIT phase
+jq '.phase = "commit" | .commit_started = now | .commit_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
 mv "$tdd_state_file.tmp" "$tdd_state_file"
 
-# Show REFACTOR guidelines from AI-DEVELOPMENT-GUIDE
-echo -e "\n${INFO} ${YELLOW}TDD REFACTOR Phase Guidelines from AI-DEVELOPMENT-GUIDE:${NC}"
-echo -e "${INFO} ${BLUE}REFACTOR PHASE RULES:${NC}"
-echo "  ✅ Improve code quality WITHOUT changing functionality"
-echo "  ✅ Run full test suite to ensure no regressions"
-echo "  ✅ Fix analyzer warnings in modified code"
-echo "  ✅ Apply AI-optimized patterns (context density, dependency flow)"
-echo "  ❌ Do NOT add new features or change behavior"
-echo ""
-echo -e "${YELLOW} Key Principle: Quality improvements while preserving functionality${NC}"
-echo ""
-
-# REFACTOR Phase: Quality improvements
-echo -e "${REFACTOR} ${YELLOW}AI Agent: Perform REFACTOR phase (Optional but Recommended):${NC}"
-echo ""
-echo -e "${YELLOW}=== OPTIONAL: REFACTOR Phase ===${NC}"
-echo -e "${INFO} Quality improvements you can make:"
-echo "  🔧 Fix StyleCop warnings (SA1xxx) in modified files"
-echo "  🔧 Apply AI-optimized file organization patterns"
-echo "  🔧 Improve variable names and code clarity"
-echo "  🔧 Add proper error handling if needed"
-echo "  🔧 Ensure proper using statements and dependencies"
-echo ""
-echo -e "${INFO} Quality commands from AI-DEVELOPMENT-GUIDE:"
-echo "  dotnet build --verbosity normal    # See analyzer warnings"
-echo "  dotnet format whitespace          # Auto-fix style issues"
-echo "  dotnet test --no-build            # Validate no regressions"
-echo ""
-
-# AI Agent: Skip optional refactoring for automated workflow
-echo -e "${INFO} AI Agent: Skipping optional refactoring - proceeding to commit"
-do_refactor="n"
-
-if [[ "$do_refactor" == "y" || "$do_refactor" == "Y" ]]; then
-    echo -e "${WORKING} Running quality checks during refactor..."
-    
-    echo -e "\n${INFO} ${YELLOW}AI Agent: Apply quality improvements:${NC}"
-    echo ""
-    echo -e "${YELLOW}=== REFACTOR: Quality Improvements ===${NC}"
-    echo -e "${INFO} 1. Run: dotnet build --verbosity normal"
-    echo -e "${INFO} 2. Fix any warnings in the files you modified"
-    echo -e "${INFO} 3. Run: dotnet format whitespace"
-    echo -e "${INFO} 4. Run: dotnet test --no-build"
-    echo -e "${INFO} 5. Ensure all tests still pass (no regressions)"
-    echo ""
-    
-    # AI Agent: Automatically proceed (refactoring was skipped anyway)
-    echo -e "${INFO} AI Agent: Proceeding automatically (no refactoring performed)"
-    
-    echo -e "${WORKING} Validating refactor didn't break functionality..."
-    echo -e "${INFO} ${YELLOW}AI Agent: Assuming tests pass since refactoring was skipped${NC}"
-    tests_pass="y"
-    
-    if [[ "$tests_pass" != "y" && "$tests_pass" != "Y" ]]; then
-        echo -e "${ERROR} Tests broken during refactoring"
-        echo -e "${INFO} Please fix the issues before committing"
-        echo -e "${INFO} Remember: REFACTOR should not change functionality"
-        exit 1
-    fi
+# Show current phase status
+if [[ "$current_phase" == "refactor-completed" ]]; then
+    echo -e "${SUCCESS} Previous refactoring applied successfully"
+elif [[ "$current_phase" == "refactor-skipped" ]]; then
+    echo -e "${INFO} Refactoring was skipped (no improvements needed)"
+else
+    echo -e "${INFO} No refactoring performed - proceeding directly to commit"
 fi
 
 # Pre-commit quality validation
@@ -157,8 +105,8 @@ fi
 # COMMIT Phase
 echo -e "\n${COMMIT} ${GREEN}COMMIT Phase${NC}: Saving working increment"
 
-# Update TDD state to COMMIT phase
-jq '.phase = "commit" | .commit_started = now | .commit_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
+# Update TDD state to COMMIT phase (already done above, but for clarity)
+jq '.phase = "commit-validating"' "$tdd_state_file" > "$tdd_state_file.tmp"
 mv "$tdd_state_file.tmp" "$tdd_state_file"
 
 echo -e "${WORKING} Preparing commit..."
@@ -207,6 +155,7 @@ echo "  Status: ✅ Working increment saved"
 echo ""
 echo -e "${INFO} Next options:"
 echo -e "${BLUE}  Continue TDD: ./.tools/commands/tdd-red 'next test description'${NC}"
+echo -e "${BLUE}  Optional refactor first: ./.tools/commands/tdd-refactor${NC}"
 echo -e "${BLUE}  Check status: ./.tools/commands/status${NC}"
 echo -e "${BLUE}  Create PR: ./.tools/commands/pr-ready${NC}"
 echo ""

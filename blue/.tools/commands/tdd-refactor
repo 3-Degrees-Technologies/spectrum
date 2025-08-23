@@ -1,0 +1,226 @@
+#!/bin/bash
+# tdd-refactor command for Spectrum Development Framework
+# Implements: TDD REFACTOR phase - Automated quality improvements after GREEN
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+REFACTOR="🔧"
+TEST="🧪"
+
+echo -e "${REFACTOR} ${BLUE}TDD REFACTOR${NC}: Automated quality improvements"
+
+# Check if we're in a TDD cycle
+tdd_state_file=".spectrum/tdd/current-cycle.json"
+if [[ ! -f "$tdd_state_file" ]]; then
+    echo -e "${ERROR} No active TDD cycle found"
+    echo -e "${INFO} Please run tdd-green first"
+    exit 1
+fi
+
+# Load TDD state
+tdd_state=$(cat "$tdd_state_file")
+cycle_number=$(echo "$tdd_state" | jq -r '.cycle_number')
+current_phase=$(echo "$tdd_state" | jq -r '.phase')
+test_description=$(echo "$tdd_state" | jq -r '.test_description')
+ticket_id=$(echo "$tdd_state" | jq -r '.ticket')
+
+# Validate we're coming from GREEN phase
+if [[ "$current_phase" != "green-confirmed" ]]; then
+    echo -e "${ERROR} Invalid TDD state: $current_phase"
+    echo -e "${INFO} Expected: green-confirmed (after running tdd-green)"
+    echo -e "${INFO} Please complete the GREEN phase first"
+    exit 1
+fi
+
+echo -e "${INFO} TDD Cycle #$cycle_number - REFACTOR Phase"
+echo -e "${INFO} Ticket: ${BLUE}$ticket_id${NC}"
+echo -e "${INFO} Test: $test_description"
+
+# Update TDD state to REFACTOR phase
+jq '.phase = "refactor" | .refactor_started = now | .refactor_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
+mv "$tdd_state_file.tmp" "$tdd_state_file"
+
+# Get list of files modified in this TDD cycle
+echo -e "\n${WORKING} Analyzing files modified in GREEN phase..."
+modified_files=$(git diff --name-only HEAD~1 2>/dev/null | grep "\.cs$" || true)
+
+if [[ -z "$modified_files" ]]; then
+    echo -e "${INFO} No C# files modified in current cycle - skipping refactor"
+    jq '.phase = "refactor-skipped" | .refactor_completed = now | .refactor_completed |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
+    mv "$tdd_state_file.tmp" "$tdd_state_file"
+    echo -e "${SUCCESS} Refactor phase complete (no changes needed)"
+    echo -e "${INFO} Next: ./.tools/commands/tdd-commit 'commit message'"
+    exit 0
+fi
+
+echo -e "${INFO} Files to refactor:"
+echo "$modified_files" | sed 's/^/  - /'
+
+# Initialize refactor tracking
+refactor_count=0
+rollback_needed=false
+
+# Helper function to validate tests still pass
+validate_tests() {
+    echo -e "${TEST} Validating tests still pass..."
+    if dotnet test --no-build --verbosity quiet >/dev/null 2>&1; then
+        echo -e "${SUCCESS} Tests pass"
+        return 0
+    else
+        echo -e "${ERROR} Tests failed after refactoring"
+        return 1
+    fi
+}
+
+# Helper function to rollback if tests fail
+rollback_changes() {
+    echo -e "${WORKING} Rolling back refactoring changes..."
+    git checkout HEAD -- $modified_files 2>/dev/null || true
+    echo -e "${ERROR} Refactoring rolled back due to test failures"
+    rollback_needed=true
+}
+
+echo -e "\n${REFACTOR} ${YELLOW}Priority 1: Style & Format${NC}"
+
+# Apply dotnet format whitespace
+echo -e "${WORKING} Applying automatic style fixes..."
+if dotnet format whitespace --verify-no-changes >/dev/null 2>&1; then
+    echo -e "${INFO} No style issues to fix"
+else
+    dotnet format whitespace >/dev/null 2>&1
+    if validate_tests; then
+        echo -e "${SUCCESS} Applied dotnet format whitespace"
+        ((refactor_count++))
+    else
+        rollback_changes
+        exit 1
+    fi
+fi
+
+# Check for specific style warnings in modified files
+echo -e "${WORKING} Checking for style warnings in modified files..."
+style_warnings=0
+for file in $modified_files; do
+    if [[ -f "$file" ]]; then
+        # Check for missing newline at end of file (SA1518)
+        if [[ -n "$(tail -c1 "$file" 2>/dev/null)" ]]; then
+            echo "" >> "$file"
+            echo -e "${SUCCESS} Fixed missing newline in $file"
+            ((style_warnings++))
+        fi
+        
+        # Check for trailing whitespace (SA1028) 
+        if grep -q '[[:space:]]$' "$file" 2>/dev/null; then
+            sed -i 's/[[:space:]]*$//' "$file"
+            echo -e "${SUCCESS} Removed trailing whitespace in $file"
+            ((style_warnings++))
+        fi
+    fi
+done
+
+if [[ $style_warnings -gt 0 ]]; then
+    if validate_tests; then
+        echo -e "${SUCCESS} Fixed $style_warnings style issues"
+        ((refactor_count++))
+    else
+        rollback_changes
+        exit 1
+    fi
+fi
+
+echo -e "\n${REFACTOR} ${YELLOW}Priority 2: Centro Financial Standards${NC}"
+
+# Check for float/double to decimal conversions
+echo -e "${WORKING} Checking for financial calculation improvements..."
+financial_improvements=0
+for file in $modified_files; do
+    if [[ -f "$file" ]]; then
+        # Look for float/double in currency/financial contexts
+        if grep -q -E "(float|double).*[Aa]mount|[Aa]mount.*(float|double)|(float|double).*[Bb]alance|[Bb]alance.*(float|double)|(float|double).*[Pp]rice|[Pp]rice.*(float|double)" "$file" 2>/dev/null; then
+            echo -e "${INFO} Found potential float/double usage in financial context in $file"
+            echo -e "${INFO} Manual review recommended: Consider using decimal for financial calculations"
+            # Note: Automatic conversion is risky, so we just flag it
+        fi
+        
+        # Check for hardcoded currency formatting
+        if grep -q -E "ToString\(\"C\"\)" "$file" 2>/dev/null; then
+            # Add CultureInfo.InvariantCulture to currency formatting
+            sed -i 's/ToString("C")/ToString("C", CultureInfo.InvariantCulture)/g' "$file"
+            # Ensure using statement is present
+            if ! grep -q "using System.Globalization;" "$file" 2>/dev/null; then
+                sed -i '1i using System.Globalization;' "$file"
+            fi
+            echo -e "${SUCCESS} Added CultureInfo.InvariantCulture to currency formatting in $file"
+            ((financial_improvements++))
+        fi
+        
+        # Check for hardcoded currency codes
+        if grep -q -E "\"(USD|EUR|GBP|CAD)\"" "$file" 2>/dev/null; then
+            echo -e "${INFO} Found hardcoded currency codes in $file"
+            echo -e "${INFO} Manual review recommended: Consider using constants for currency codes"
+        fi
+    fi
+done
+
+if [[ $financial_improvements -gt 0 ]]; then
+    if validate_tests; then
+        echo -e "${SUCCESS} Applied $financial_improvements financial standard improvements"
+        ((refactor_count++))
+    else
+        rollback_changes
+        exit 1
+    fi
+fi
+
+echo -e "\n${REFACTOR} ${YELLOW}Priority 4: Logging & Observability${NC}"
+
+# Check for logging improvements
+echo -e "${WORKING} Checking for logging improvements..."
+logging_improvements=0
+for file in $modified_files; do
+    if [[ -f "$file" ]]; then
+        # Look for basic logging that could be improved
+        if grep -q -E "_logger\.Log.*\(\".*\"\)" "$file" 2>/dev/null; then
+            echo -e "${INFO} Found basic logging in $file"
+            echo -e "${INFO} Manual review recommended: Consider structured logging with correlation IDs"
+        fi
+        
+        # Look for exception logging without context
+        if grep -q -E "_logger\.LogError.*Exception" "$file" 2>/dev/null; then
+            echo -e "${INFO} Found exception logging in $file" 
+            echo -e "${INFO} Manual review recommended: Ensure correlation ID and tenant context included"
+        fi
+    fi
+done
+
+# Final validation
+echo -e "\n${TEST} ${YELLOW}Final validation${NC}"
+if ! validate_tests; then
+    rollback_changes
+    exit 1
+fi
+
+# Update TDD state to completed refactor
+jq '.phase = "refactor-completed" | .refactor_completed = now | .refactor_completed |= todate | .refactor_improvements = $count' --arg count "$refactor_count" "$tdd_state_file" > "$tdd_state_file.tmp"
+mv "$tdd_state_file.tmp" "$tdd_state_file"
+
+echo -e "\n${SUCCESS} ${BLUE}TDD REFACTOR COMPLETE${NC}"
+echo -e "${INFO} Summary:"
+echo "  Cycle: #$cycle_number"
+echo "  Test: $test_description"
+echo "  Improvements applied: $refactor_count"
+echo "  Status: ✅ Quality improvements completed safely"
+echo ""
+echo -e "${INFO} Next step:"
+echo -e "${GREEN}  Run: ./.tools/commands/tdd-commit 'commit message'${NC}"
+echo "  This will commit the working cycle with refactoring improvements"
+echo ""
+echo -e "${YELLOW} Refactoring focused on safe, high-impact quality improvements${NC}"

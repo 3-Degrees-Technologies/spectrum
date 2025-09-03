@@ -18,6 +18,80 @@ CREATE="🎫"
 VALIDATE="✨"
 TEMPLATE="📄"
 
+# Helper function to ensure project config exists
+ensure_project_config() {
+    local config_file=".project_config.json"
+    
+    # If config doesn't exist or is empty, create it
+    if [ ! -f "$config_file" ] || [ ! -s "$config_file" ]; then
+        echo "📋 Initializing project configuration..." >&2
+        
+        # Get project info from saber.py discover
+        local discover_output=$(python3 .tools/saber.py discover 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            # Extract project info - look for lines with ⭐ CURRENT TEAM
+            local project_key=$(echo "$discover_output" | grep -B2 "⭐ CURRENT TEAM" | grep "Key:" | cut -d' ' -f2)
+            local project_name=$(echo "$discover_output" | grep -B4 "⭐ CURRENT TEAM" | grep "Name:" | cut -d' ' -f2)
+            
+            if [ -n "$project_key" ] && [ -n "$project_name" ]; then
+                # Create config JSON
+                cat > "$config_file" << EOF
+{
+  "project_key": "$project_key",
+  "project_name": "$project_name",
+  "linear_org": "$(echo "$project_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "source": "saber_discover"
+}
+EOF
+                echo "✅ Project config created: $project_key ($project_name)" >&2
+            else
+                # Fallback config
+                cat > "$config_file" << EOF
+{
+  "project_key": "PLY",
+  "project_name": "FoxyPlayer",
+  "linear_org": "foxyplayer",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "source": "fallback"
+}
+EOF
+                echo "⚠️ Using fallback project config" >&2
+            fi
+        else
+            # Fallback config if saber fails
+            cat > "$config_file" << EOF
+{
+  "project_key": "PLY",
+  "project_name": "FoxyPlayer", 
+  "linear_org": "foxyplayer",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "source": "fallback"
+}
+EOF
+            echo "⚠️ Saber discovery failed, using fallback config" >&2
+        fi
+    fi
+}
+
+# Helper function to get project prefix
+get_project_prefix() {
+    ensure_project_config
+    python3 -c "import json; print(json.load(open('.project_config.json'))['project_key'])" 2>/dev/null || echo "PLY"
+}
+
+# Helper function to get project name
+get_project_name() {
+    ensure_project_config
+    python3 -c "import json; print(json.load(open('.project_config.json'))['project_name'])" 2>/dev/null || echo "FoxyPlayer"
+}
+
+# Helper function to get Linear organization URL
+get_linear_org_url() {
+    ensure_project_config
+    python3 -c "import json; print(json.load(open('.project_config.json'))['linear_org'])" 2>/dev/null || echo "foxyplayer"
+}
+
 # Usage check
 if [ $# -lt 3 ]; then
     echo -e "${ERROR} Usage: ./write_ticket <type> <title> <brief> [parent_id]"
@@ -65,7 +139,7 @@ ${agent_brief} requires thorough analysis to understand current patterns, identi
 **Task**
 Conduct comprehensive research on ${agent_brief}:
 
-* Analyze existing Centro patterns and implementations
+* Analyze existing patterns and implementations in the codebase
 * Research industry best practices and approaches
 * Identify integration points with current architecture
 * Document findings with concrete recommendations
@@ -73,7 +147,7 @@ Conduct comprehensive research on ${agent_brief}:
 
 **Key Research Areas**
 
-* **Existing Patterns**: How is similar functionality currently implemented in Centro?
+* **Existing Patterns**: How is similar functionality currently implemented?
 * **Integration Points**: What existing systems need to integrate with this functionality?
 * **Best Practices**: What are the recommended approaches in the industry?
 * **Constraints**: What technical and business constraints affect implementation?
@@ -81,7 +155,7 @@ Conduct comprehensive research on ${agent_brief}:
 
 **Success Criteria**
 
-* Current Centro patterns documented and analyzed
+* Current patterns documented and analyzed
 * Industry best practices researched and compared
 * Integration requirements identified and documented
 * Technical constraints and considerations documented
@@ -98,16 +172,16 @@ research"
 Define the functional requirements and integration patterns for ${agent_brief}.
 
 **Context**
-Based on research findings, this design phase explores what ${agent_brief} should functionally accomplish and how it integrates with existing Centro systems.
+Based on research findings, this design phase explores what ${agent_brief} should functionally accomplish and how it integrates with existing systems.
 
 **Task**
 Explore and define the functional integration patterns for ${agent_brief}:
 
-* How should this functionality integrate with existing Centro patterns?
+* How should this functionality integrate with existing architectural patterns?
 * What contracts and interfaces should be defined?
 * How should error handling and edge cases be managed?
 * What operational visibility and monitoring is needed?
-* How should this fit with existing Centro architectural patterns?
+* How should this fit with existing architectural patterns?
 
 **Key Functional Questions to Answer**
 
@@ -115,7 +189,7 @@ Explore and define the functional integration patterns for ${agent_brief}:
 * **Contracts**: What interfaces and contracts need to be defined?
 * **Error Handling**: What failure modes exist and how should recovery work?
 * **Observability**: What information do operators need for monitoring and debugging?
-* **Centro Patterns**: How does this align with existing Centro architectural patterns?
+* **Architectural Patterns**: How does this align with existing architectural patterns?
 
 **Success Criteria**
 
@@ -123,7 +197,7 @@ Explore and define the functional integration patterns for ${agent_brief}:
 * Contracts and interfaces specified for consistent behavior
 * Error handling and recovery patterns specified
 * Operational monitoring and debugging requirements identified
-* Integration approach with existing Centro systems documented
+* Integration approach with existing systems documented
 * Functional requirements ready for implementation planning
 
 **Labels**
@@ -133,16 +207,26 @@ design"
         ticket_description="# ${ticket_title}
 
 **Objective**
-Implement ${agent_brief} following test-driven development approach.
+${agent_brief} following test-driven development approach.
 
 **Context**
-Based on design specifications, implement the functionality with focus on correctness and integration with existing Centro systems.
+Based on design specifications, implement the functionality with focus on correctness and integration with existing systems.
+
+**Domain Implementation Rule**
+⚠️ **CRITICAL**: Implement ALL domain-related code in a SINGLE FILE. Do not follow standard Android separation patterns.
+
+* If this is authentication-related → Put everything in \`auth.kt\`
+* If this is music discovery-related → Put everything in \`music.kt\`
+* If this is playback-related → Put everything in \`playback.kt\`
+* Include: Models, Repository, UseCase, Screen, ViewModel - ALL in one file
+* **Ignore Kotlin conventions** that separate layers into different files
+* **Context window optimization**: AI needs all domain code visible simultaneously
 
 **Task**
-Implement ${agent_brief} using TDD methodology:
+${agent_brief} using TDD methodology:
 
 * Write tests covering functional requirements
-* Implement core functionality following Centro patterns
+* Implement core functionality following established patterns
 * Add error handling for edge cases
 * Add logging and monitoring instrumentation
 * Validate integration with existing systems
@@ -150,15 +234,17 @@ Implement ${agent_brief} using TDD methodology:
 **Implementation Approach**
 
 * Follow test-driven development with comprehensive test coverage
-* Use existing Centro patterns and conventions
-* Ensure clean integration with existing Centro architecture
+* Use existing patterns and conventions
+* Ensure clean integration with existing architecture
+* **Keep all domain code in single file for AI context optimization**
 
 **Definition of Done**
 
 * Tests written and passing for all functionality
-* Core functionality implemented following Centro patterns
+* Core functionality implemented following established patterns
 * Error handling implemented for identified failure modes
 * Integration with existing systems validated
+* **ALL domain code consolidated in single file**
 * Code review completed and approved
 
 **Labels**
@@ -176,22 +262,6 @@ if [ $? -ne 0 ]; then
     echo -e "${ERROR} Failed to create ticket"
     exit 1
 fi
-
-# Helper function to get project prefix
-get_project_prefix() {
-    local config_file=".spectrum/linear_config.json"
-    if [ -f "$config_file" ]; then
-        python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
-    else
-        # Get from saber and create config if missing
-        python3 .tools/saber.py config >/dev/null 2>&1
-        if [ -f "$config_file" ]; then
-            python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
-        else
-            echo "SPE"  # fallback
-        fi
-    fi
-}
 
 # Extract ticket ID from result using stored prefix
 project_prefix=$(get_project_prefix)
@@ -244,5 +314,6 @@ echo -e "${INFO} Type: ${type_name}"
 if [ -n "$parent_id" ]; then
     echo -e "${INFO} Parent: ${parent_id}"
 fi
-echo -e "${INFO} Linear URL: https://linear.app/3-degrees-technologies/issue/${ticket_id}"
+linear_org=$(get_linear_org_url)
+echo -e "${INFO} Linear URL: https://linear.app/${linear_org}/issue/${ticket_id}"
 echo -e "${BLUE}Ticket ready for assignment!${NC}"

@@ -28,6 +28,7 @@ if [[ $# -lt 1 ]]; then
     echo "  green   → $(get_agent_name green) in ./green"
     echo "  red     → $(get_agent_name red) in ./red"
     echo "  blue    → $(get_agent_name blue) in ./blue"
+    echo "  blue    → $(get_agent_name black) in ./black"
     exit 1
 fi
 
@@ -62,9 +63,18 @@ case "$AGENT_COLOR" in
             mkdir -p "./blue"
         fi
         ;;
+    "black")
+        AGENT_NAME="$(get_agent_name black)"
+        WORK_DIR="./black"
+        # Ensure black directory exists
+        if [[ ! -d "./black" ]]; then
+            echo "📁 Creating black directory for $AGENT_NAME..."
+            mkdir -p "./black"
+        fi
+        ;;
     *)
         echo "❌ Unknown agent: $AGENT_COLOR"
-        echo "Available: green, red, blue"
+        echo "Available: green, red, blue, black"
         exit 1
         ;;
 esac

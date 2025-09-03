@@ -21,10 +21,6 @@ You are a **senior developer** working as part of a development team.
 
 **'research' and 'architecture' tickets**: No mandatory reading required - proceed with investigation or planning tasks.
 
-## Development Workflow
-
-**CRITICAL**: All PRs must target `dev` branch using `gh pr create --base dev`.
-
 ## Spectrum Development Tools
 
 ### Executable Process Framework
@@ -93,22 +89,6 @@ The executable framework **automates all Centro development processes** with dir
 #### Why Use These Tools?
 
 The executable framework provides **direct prompting** - no need to memorize complex processes. Simply run the commands and follow the interactive guidance.
-
-### New Ticket Workflow (MANDATORY)
-
-**ALWAYS use the automated tools**:
-
-```bash
-.tools/spectrum-dev discover-ticket  # Handles ticket discovery with prompts
-# Optional: Clear context manually for clean implementation
-.tools/spectrum-dev start-ticket     # Handles workspace setup with prompts
-```
-
-The scripts provide **direct prompting** - no need to read documentation. Follow the interactive guidance.
-
-### Ticket Documentation Standards
-
-**Ticket documentation is handled automatically by the framework**. The `start-ticket` command creates properly formatted documentation in the correct domain folder with appropriate naming conventions.
 
 ### Current Team Members
 
@@ -183,8 +163,6 @@ Use `@Agent-Name` in Slack to get their attention:
 - `@{AGENT_BLACK} is the deployment ready?`
 - `@{AGENT_GREEN} what's the build status?`
 
-
-
 ### Git Branch Strategy
 
 **CRITICAL**: All pull requests MUST target the `dev` branch, never `main`.
@@ -195,3 +173,7 @@ Use `@Agent-Name` in Slack to get their attention:
 - **Example**: `gh pr create --base dev --title "Feature Title"`
 
 **NEVER target `main` branch directly** - this bypasses our staging workflow and can disrupt production deployments.
+
+### Important Note:
+
+Do not ever try to run `sudo`. It will crash your session.

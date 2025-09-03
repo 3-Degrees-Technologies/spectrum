@@ -4,10 +4,10 @@ This folder contains the app manifests for creating the Spectrum AI development 
 
 ## Spectrum Agent Team
 
-1. **Captain Scarlet** (Red #e74c3c) - Senior Developer (full-stack development)
-2. **Captain Blue** (Blue #3498db) - Senior Developer (full-stack development)  
-3. **Captain Black** (Dark #2c3e50) - DevOps Engineer (AWS, deployments, infrastructure)
-4. **Lieutenant Green** (Green #27ae60) - Product Owner (requirements, coordination)
+1. **Agent Red** (Red #e74c3c) - Senior Developer (full-stack development)
+2. **Agent Blue** (Blue #3498db) - Senior Developer (full-stack development)  
+3. **Agent Black** (Dark #2c3e50) - DevOps Engineer (AWS, deployments, infrastructure)
+4. **Agent Green** (Green #27ae60) - Product Owner (requirements, coordination)
 
 ## How to Use
 
@@ -22,12 +22,13 @@ This folder contains the app manifests for creating the Spectrum AI development 
 
 ## Files
 
-- `captain-scarlet-manifest.json` - Senior Developer
-- `captain-blue-manifest.json` - Senior Developer
-- `captain-black-manifest.json` - DevOps Engineer
-- `lieutenant-green-manifest.json` - Product Owner
+- `red-manifest.json` - Senior Developer
+- `blue-manifest.json` - Senior Developer
+- `black-manifest.json` - DevOps Engineer
+- `green-manifest.json` - Product Owner
 
 After creating all bots, collect their tokens and invite them to your channel:
+
 ```
-/invite @captain-scarlet @captain-blue @captain-black @lieutenant-green
+/invite @agent-red @agent-blue @agent-black @agent-green
 ```

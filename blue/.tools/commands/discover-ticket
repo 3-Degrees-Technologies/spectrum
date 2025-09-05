@@ -60,7 +60,7 @@ fi
 echo -e "${WORKING} Searching for my ticket assignments..."
 
 # Get my agent name and user ID for filtering
-my_agent_name=$(python3 .tools/slack_rest_client.py detect_agent | jq -r '.agent_name // "{AGENT_BLUE}"' 2>/dev/null || echo "{AGENT_BLUE}")
+my_agent_name=$(python3 .tools/slack_rest_client.py detect_agent | jq -r '.agent_name // "{AGENT_RED}"' 2>/dev/null || echo "{AGENT_RED}")
 my_user_id=$(python3 .tools/slack_rest_client.py get_relevant_messages 1 | jq -r '.bot_user_id // "U096VLDAHJ5"' 2>/dev/null || echo "U096VLDAHJ5")
 
 # Look for assignments TO ME that I haven't already completed (check both user ID and agent name)
@@ -200,7 +200,7 @@ cat > "$TICKET_INFO_FILE" << EOF
   "ticket_file": "$ticket_file_path",
   "ticket_type": "$ticket_type",
   "discovered_at": "$(date -Iseconds)",
-  "discovered_by": "{AGENT_BLUE}"
+  "discovered_by": "{AGENT_RED}"
 }
 EOF
 

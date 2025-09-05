@@ -49,7 +49,7 @@ echo ""
 
 # Get recent Slack messages (exclude ones I've already reacted to)
 echo -e "${WORKING} Checking Slack for ticket assignments..."
-python3 .tools/slack_rest_client.py get_relevant_messages 10 > "$SPECTRUM_TMP_DIR/slack_messages.json"
+python3 .tools/slack_rest_client.py get_relevant_messages 50 > "$SPECTRUM_TMP_DIR/slack_messages.json"
 
 if [[ ! -s "$SPECTRUM_TMP_DIR/slack_messages.json" ]]; then
     echo -e "${ERROR} Failed to fetch Slack messages"
@@ -61,7 +61,14 @@ echo -e "${WORKING} Searching for my ticket assignments..."
 
 # Get my agent name and user ID for filtering
 my_agent_name=$(python3 .tools/slack_rest_client.py detect_agent | jq -r '.agent_name // "{AGENT_RED}"' 2>/dev/null || echo "{AGENT_RED}")
-my_user_id=$(python3 .tools/slack_rest_client.py get_relevant_messages 1 | jq -r '.bot_user_id // "U096VLDAHJ5"' 2>/dev/null || echo "U096VLDAHJ5")
+my_user_id=$(python3 .tools/slack_rest_client.py get_relevant_messages 1 | jq -r '.bot_user_id // empty' 2>/dev/null)
+
+# If we didn't get a user ID from the API, try to detect it from recent messages
+if [[ -z "$my_user_id" ]]; then
+    my_user_id=$(jq -r '.result.messages[] | select(.user_name == "{AGENT_RED}") | .user_id' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
+fi
+
+echo -e "${INFO} Agent: $my_agent_name (ID: $my_user_id)"
 
 # Look for assignments TO ME that I haven't already completed (check both user ID and agent name)
 # Exclude congratulatory messages and look specifically for assignment language
@@ -74,9 +81,20 @@ if [[ -z "$ticket_assignment" || "$ticket_assignment" == "null" ]]; then
     # Check for any tickets I was assigned but may not have completed
     incomplete_assignment=$(jq -r --arg agent "$my_agent_name" --arg userid "$my_user_id" '.result.messages[] | select(.user_name == "{AGENT_GREEN}") | select(.text | (contains($agent) or contains($userid)) and test("[A-Z]+-[0-9]+")) | select(.text | test("New Assignment|assigned.*[A-Z]+-[0-9]+|Assignment.*[A-Z]+-[0-9]+"; "i")) | select(.text | test("Excellent|Great|congratulations|completed|done|finished"; "i") | not) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
     
+    # Also check my own acknowledgment messages that might contain ticket info
+    if [[ -z "$incomplete_assignment" || "$incomplete_assignment" == "null" ]]; then
+        echo -e "${INFO} Checking my own acknowledgment messages..."
+        my_acknowledgment=$(jq -r --arg userid "$my_user_id" '.result.messages[] | select(.user_id == $userid) | select(.text | test("Received.*[A-Z]+-[0-9]+.*assignment|[A-Z]+-[0-9]+.*assignment")) | .text' "$SPECTRUM_TMP_DIR/slack_messages.json" 2>/dev/null | head -n 1)
+        
+        if [[ -n "$my_acknowledgment" && "$my_acknowledgment" != "null" ]]; then
+            echo -e "${INFO} Found acknowledgment message: $my_acknowledgment"
+            incomplete_assignment="$my_acknowledgment"
+        fi
+    fi
+    
     if [[ -z "$incomplete_assignment" || "$incomplete_assignment" == "null" ]]; then
         echo -e "${INFO} No assignments found. Requesting new ticket from {AGENT_GREEN}..."
-        python3 .tools/slack_rest_client.py send_message "@{AGENT_GREEN} Ready for next ticket assignment. CEN-491 completed and merged. What should I work on next?"
+        python3 .tools/slack_rest_client.py send_message "@{AGENT_GREEN} Ready for next ticket assignment. What should I work on next?"
         echo -e "${SUCCESS} Requested new ticket assignment from {AGENT_GREEN}"
         echo -e "${INFO} Please wait for assignment and re-run discover-ticket"
         exit 0

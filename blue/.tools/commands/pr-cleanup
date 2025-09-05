@@ -213,9 +213,9 @@ if [[ -f ".spectrum/current-cycle.json" ]]; then
     rm -f .spectrum/current-cycle.json
 fi
 
-# Notify Agent-Knowledge that ticket is complete and ready for next assignment
-echo -e "\n${WORKING} Notifying Agent-Knowledge of completion..."
-notification_message="@Agent-Knowledge $ticket_id is complete and delivered! 🎉
+# Notify {AGENT_GREEN} that ticket is complete and ready for next assignment
+echo -e "\n${WORKING} Notifying {AGENT_GREEN} of completion..."
+notification_message="@{AGENT_GREEN} $ticket_id is complete and delivered! 🎉
 
 ✅ $ticket_title
 ✅ PR merged with all quality gates passed: $pr_url
@@ -227,10 +227,10 @@ Current status: Available for new work
 Domain expertise: C# API development, .NET ecosystem, fintech integrations"
 
 if python3 .tools/slack_rest_client.py send_message "$notification_message" >/dev/null 2>&1; then
-    echo -e "${SUCCESS} Agent-Knowledge notified of completion"
+    echo -e "${SUCCESS} {AGENT_GREEN} notified of completion"
 else
-    echo -e "${YELLOW} Warning: Could not notify Agent-Knowledge (Slack API unavailable)"
-    echo -e "${INFO} Please manually notify Agent-Knowledge that $ticket_id is complete"
+    echo -e "${YELLOW} Warning: Could not notify {AGENT_GREEN} (Slack API unavailable)"
+    echo -e "${INFO} Please manually notify {AGENT_GREEN} that $ticket_id is complete"
 fi
 
 # SAFETY REMINDER: This script completed without modifying working directories
@@ -255,5 +255,5 @@ echo "  🔄 Workflow state: Reset for next assignment"
 echo "  🌳 Git state: On dev branch with latest changes"
 echo ""
 echo -e "${SUCCESS} ${GREEN}READY FOR NEXT TICKET ASSIGNMENT!${NC}"
-echo -e "${INFO} Agent-Knowledge can now assign new tickets"
+echo -e "${INFO} {AGENT_GREEN} can now assign new tickets"
 echo -e "${INFO} Run './.tools/commands/start-ticket' when new assignment received"

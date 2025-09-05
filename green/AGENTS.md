@@ -43,7 +43,7 @@ saber.py list | grep -i "keyword"
 1. **Single focused task** → `./write_ticket implementation "Title" "Brief"`
 2. **Epic needed (Research → Implementation)** → `./bulk_breakdown epic "Title" "Description"`
 3. **Large implementation (4+ subtasks)** → `./bulk_breakdown implementation "Title" "Description" PARENT-ID`
-4. **Validation failed - too broad** → `./bulk_breakdown split SPE-123`
+4. **Validation failed - too broad** → `./bulk_breakdown split {PREFIX}-123`
 
 ### Breakdown Triggers:
 
@@ -122,7 +122,7 @@ PRO-123: Wise Payment Provider Implementation [Parent]
 **Ticket Assignment Protocol:**
 
 1. Send Slack summary with key context
-2. Provide full details: `./find-issue.sh CEN-XXX | jq -r '.description'`
+2. Provide full details: `./find-issue.sh {PREFIX}-XXX | jq -r '.description'`
 3. Update to "In Progress"
 
 ### 3. Design-First Methodology
@@ -135,23 +135,23 @@ PRO-123: Wise Payment Provider Implementation [Parent]
 
 **Saber - Ultimate Linear Tool:**
 
-In this list, PRO replaces whatever short name Linear has given your project.  I am using 123 as an example ticket number.
 
-- `saber.py get PRO-123` - Get ticket details
-- `saber.py status PRO-123 "Status"` - Update status  
+
+- `saber.py get {PREFIX}-123` - Get ticket details
+- `saber.py status {PREFIX}-123 "Status"` - Update status  
 - `saber.py list [status]` - List tickets with filtering
-- `saber.py parent PRO-child PRO-parent` - Set parent-child relationship
-- `saber.py epic PRO-parent PRO-sub1,PRO-sub2,PRO-sub3` - Create epic structure
+- `saber.py parent {PREFIX}-child {PREFIX}-parent` - Set parent-child relationship
+- `saber.py epic {PREFIX}-parent {PREFIX}-sub1,{PREFIX}-sub2,{PREFIX}-sub3` - Create epic structure
 - `saber.py create "Title" "Description"` - Create tickets
-- `saber.py comment PRO-123 "Comment"` - Add comments
-- `saber.py description PRO-123 "New description"` - Update descriptions
-- `saber.py label PRO-123 add "bug,urgent"` - Add labels
+- `saber.py comment {PREFIX}-123 "Comment"` - Add comments
+- `saber.py description {PREFIX}-123 "New description"` - Update descriptions
+- `saber.py label {PREFIX}-123 add "bug,urgent"` - Add labels
 - `saber.py labels` - List all available labels
 
 **Bash Automation Scripts:**
 
-- `./assign_ticket PRO-123 Agent-Name` - Automated ticket assignment with attachments
-- `./validate_ticket PRO-123` - Check tickets against bad patterns and suggest breakdown
+- `./assign_ticket {PREFIX}-123 Agent-Name` - Automated ticket assignment with attachments
+- `./validate_ticket {PREFIX}-123` - Check tickets against bad patterns and suggest breakdown
 - `./write_ticket` - Interactive ticket creation with templates and auto-validation
 - `./bulk_breakdown` - **USE THIS FOR COMPLEX TASKS** - Epic/multi-ticket creation with validation
 

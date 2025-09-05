@@ -139,7 +139,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 - Knowledge gap
 - Ambiguous instructions
 - Task lifecycle
-- **Example Tasks**: "Will this work on the Wise API?", "Move ticket CEN-123 to In Progress"
+- **Example Tasks**: "Will this work on the Wise API?", "Move ticket {PREFIX}-123 to In Progress"
 
 ## How to Contact Team Members
 

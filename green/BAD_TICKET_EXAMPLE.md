@@ -206,13 +206,12 @@ CREATE TABLE users (
 
 ## Everything Wrong With This Ticket
 
-### ❌ **Language-Induced Agent Misdirection** 
+### ❌ **Language-Induced Agent Misdirection**
 
 **Critical Discovery:** Ticket language directly shapes agent behavior and can lead agents down wrong paths.
 
-**Examples from CEN-409 Analysis:**
-
 **❌ Implementation-Focused Language in Design Phase:**
+
 - "Design detailed Centro.Lambda.Projections architecture" → "detailed" pushed toward implementation
 - "Architect ProjectionLambdaFunction entry point" → prescribes specific class names
 - **Result:** Agent wrote implementation code instead of functional design
@@ -220,11 +219,13 @@ CREATE TABLE users (
 ✅ **Better Design Language:** "Design how Lambda projections integrate with existing Centro event sourcing"
 
 **❌ Prescriptive Technical Details:**
+
 - "ProjectionRouter.cs directing events" → dictates implementation structure  
 - Should ask "How should events be routed?" not "Design ProjectionRouter.cs"
 - **Result:** Agent focused on technical structure, not functional requirements
 
 **❌ Performance/NFR Targets in Discovery Phase:**
+
 - "Achieve 450KB package size, 400ms cold starts" → premature optimization in greenfield project
 - **CRITICAL FLAW:** Setting performance limits in discovery phase without measurement methodology
 - **Problem:** We have no baseline, no measurement tools, no performance requirements gathered
@@ -232,6 +233,7 @@ CREATE TABLE users (
 - **Fix:** Performance constraints belong in **optimization phases** after core functionality is proven
 
 ✅ **Proper Phase Sequencing:**
+
 - **Discovery/Design Phase:** Focus on "what it does" and "how it integrates"
 - **Implementation Phase:** Focus on "how to build it" with functional correctness
 - **Optimization Phase:** Focus on "how fast/small it needs to be" with measurement methodology
@@ -328,26 +330,28 @@ CREATE TABLE users (
 
 **Never create tickets like this example. Use GOOD_IMPLEMENTATION_TICKET_EXAMPLE.md as the standard instead.**
 
-## Additional Learning: CEN-409 Design Ticket Language Analysis
 
-**Based on Agent-Sam's retrospective analysis of CEN-409, which revealed how ticket language directly caused wrong approach:**
 
 ### The Language Problem
+
 Agent-Sam delivered **implementation planning** instead of **functional design** because the ticket used implementation-focused language throughout.
 
 ### Specific Language Issues Identified:
 
 **❌ Bad Design Language:**
+
 - "Design detailed Centro.Lambda.Projections architecture" 
 - "Architect ProjectionLambdaFunction entry point and routing logic"
 - "Performance Targets: Achieve 450KB package size, 400ms cold starts, 256MB memory"
 
 **✅ Better Design Language:**
+
 - "Design how Lambda projections integrate with existing Centro event sourcing"
 - "Define how projection events should be processed and routed"  
 - "Define projection processing requirements and constraints"
 
 ### Core Insight
+
 **Design Phase** should ask functional questions: "What should this system do and how should it integrate?"
 **Implementation Phase** should answer technical questions: "How do we build this and how fast should it run?"
 

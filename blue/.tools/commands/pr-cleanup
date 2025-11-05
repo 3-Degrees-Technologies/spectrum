@@ -24,20 +24,27 @@ ARCHIVE="📚"
 echo -e "${CLEANUP} ${BLUE}PR CLEANUP${NC}: Post-merge cleanup and ticket archival"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".tmp/current-ticket.json" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR" ".spectrum/archive/completed-tickets"
+
+if [[ ! -f "$CURRENT_TICKET_FILE" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
     echo -e "${INFO} Please ensure you have an active PR workflow"
     exit 1
 fi
 
 # Load current ticket context
-ticket_info=$(cat .tmp/current-ticket.json)
-ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
+ticket_info=$(cat "$CURRENT_TICKET_FILE")
+ticket_id=$(echo "$ticket_info" | jq -r '.ticket_id')
 ticket_title=$(echo "$ticket_info" | jq -r '.title')
-domain=$(echo "$ticket_info" | jq -r '.domain')
+domain=$(echo "$ticket_info" | jq -r '.domain // empty')
 branch=$(echo "$ticket_info" | jq -r '.branch')
 pr_url=$(echo "$ticket_info" | jq -r '.pr_url // empty')
-current_phase=$(echo "$ticket_info" | jq -r '.phase')
+current_phase=$(echo "$ticket_info" | jq -r '.status // "unknown"')
 
 echo -e "${INFO} Cleaning up after PR merge: ${BLUE}$ticket_id${NC} - $ticket_title"
 echo -e "${INFO} Domain: $domain"
@@ -46,7 +53,42 @@ echo -e "${INFO} Current phase: $current_phase"
 
 # Safety check - confirm PR is merged
 echo -e "\n${WORKING} ${YELLOW}Verifying PR merge status...${NC}"
-echo -e "${ERROR} ${RED}IMPORTANT: Only run this command AFTER the PR has been merged!${NC}"
+
+# Extract PR number from PR URL if available
+if [[ -n "$pr_url" && "$pr_url" != "empty" ]]; then
+    pr_number=$(echo "$pr_url" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+    if [[ -n "$pr_number" ]]; then
+        echo -e "${INFO} Checking PR #$pr_number merge status..."
+        
+        # Check if PR is merged using GitHub CLI
+        pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+        
+        if [[ "$pr_state" != "MERGED" ]]; then
+            echo -e "${ERROR} ${RED}CRITICAL ERROR: PR #$pr_number is not merged!${NC}"
+            echo -e "${ERROR} PR State: $pr_state"
+            echo -e "${INFO} This command can only be run AFTER the PR has been merged."
+            echo -e "${INFO} Please:"
+            echo "  1. Get the PR reviewed and approved"
+            echo "  2. Merge the PR through GitHub"
+            echo "  3. Then run pr-cleanup"
+            echo ""
+            echo -e "${ERROR} Aborting cleanup to prevent data loss!"
+            exit 1
+        fi
+        
+        echo -e "${SUCCESS} Verified: PR #$pr_number is MERGED"
+    else
+        echo -e "${YELLOW} Warning: Could not extract PR number from URL: $pr_url"
+        echo -e "${INFO} ${BLUE}AI Agent Note:${NC} ${YELLOW}Cannot automatically verify PR merge status${NC}"
+        echo -e "${INFO} Proceeding with cleanup assuming PR has been merged as instructed"
+    fi
+else
+    echo -e "${YELLOW} Warning: No PR URL found in ticket state"
+    echo -e "${INFO} ${BLUE}AI Agent Note:${NC} ${YELLOW}Cannot automatically verify PR merge status${NC}"
+    echo -e "${INFO} This may be due to PR URL not being captured during pr-ready"
+    echo -e "${INFO} Proceeding with cleanup assuming PR has been merged as instructed"
+fi
+
 echo ""
 echo -e "${INFO} This command will:"
 echo "  🗑️  Delete the local feature branch"
@@ -54,9 +96,6 @@ echo "  📚 Archive ticket documentation"
 echo "  🧹 Clean up all workflow state"
 echo "  🔄 Reset for next assignment"
 echo ""
-
-# AI Agent: Proceed with cleanup automatically
-# This tool assumes PR has been merged when called
 echo -e "${INFO} Proceeding with post-merge cleanup..."
 
 # Check current branch
@@ -67,9 +106,9 @@ if [[ "$current_git_branch" == "$branch" ]]; then
     # Note: .tools directory is protected from modification but doesn't block branch operations
     
     # Handle temp files safely before branch switch
-    if git status --porcelain | grep -q '\.spectrum/'; then
+    if git status --porcelain | grep -q -E '\.spectrum/'; then
         echo -e "${INFO} Removing temporary workflow files..."
-        rm -f .tmp/current-ticket.json .spectrum/current-cycle.json
+        rm -f "$CURRENT_TICKET_FILE" "$SPECTRUM_STATE_DIR/current-tdd-cycle.json" 
         echo -e "${SUCCESS} Temporary files cleaned"
     fi
     
@@ -96,7 +135,7 @@ git pull origin dev || {
 }
 echo -e "${SUCCESS} Dev branch updated"
 
-# Delete the feature branch
+# Delete the feature branch (local and remote)
 echo -e "\n${WORKING} Deleting local feature branch..."
 git branch -d "$branch" || {
     echo -e "${YELLOW} Warning: Could not delete branch $branch (may have unmerged changes)"
@@ -110,11 +149,20 @@ git branch -d "$branch" || {
 }
 echo -e "${SUCCESS} Local feature branch deleted"
 
+# Delete the remote feature branch
+echo -e "\n${WORKING} Deleting remote feature branch..."
+if git push origin --delete "$branch" 2>/dev/null; then
+    echo -e "${SUCCESS} Remote feature branch deleted"
+else
+    echo -e "${YELLOW} Warning: Could not delete remote branch (may already be deleted or no remote access)"
+    echo -e "${INFO} This is normal if branch was auto-deleted after PR merge"
+fi
+
 # Archive ticket documentation
 echo -e "\n${ARCHIVE} ${WORKING} Archiving ticket documentation..."
 
-domain_folder=$(echo "$ticket_info" | jq -r '.domain_folder')
-ticket_doc_path=$(echo "$ticket_info" | jq -r '.ticket_doc_path')
+domain_folder=$(echo "$ticket_info" | jq -r '.domain_folder // empty')
+ticket_doc_path=$(echo "$ticket_info" | jq -r '.ticket_doc_path // empty')
 
 if [[ -f "$ticket_doc_path" ]]; then
     # Create tickets subfolder if it doesn't exist
@@ -176,46 +224,58 @@ fi
 
 # Archive TDD state
 echo -e "\n${WORKING} Archiving TDD workflow state..."
-if [[ -d ".spectrum/tdd" ]]; then
+if [[ -d ".spectrum/archive/tdd-history" ]]; then
     # Archive TDD history to ticket-specific folder
     tdd_archive_dir="$domain_folder/tickets/$ticket_id-tdd-history"
     mkdir -p "$tdd_archive_dir"
     
-    if [[ -d ".spectrum/tdd/history" ]]; then
-        cp -r .spectrum/tdd/history/* "$tdd_archive_dir/" 2>/dev/null || true
-        echo -e "${SUCCESS} TDD cycle history archived to: $tdd_archive_dir"
-    fi
+    cp -r .spectrum/archive/tdd-history/* "$tdd_archive_dir/" 2>/dev/null || true
+    echo -e "${SUCCESS} TDD cycle history archived to: $tdd_archive_dir"
     
-    # Remove all TDD state
+    # Keep TDD state in unified archive location
+    echo -e "${SUCCESS} TDD workflow state preserved in .spectrum/archive/"
+fi
+
+# Clean up any legacy state directories (backward compatibility)
+if [[ -d ".tmp/tdd-history" ]]; then
+    rm -rf .tmp/tdd-history
+fi
+if [[ -d ".spectrum/tdd" ]]; then
     rm -rf .spectrum/tdd
-    echo -e "${SUCCESS} TDD workflow state cleaned up"
+    echo -e "${INFO} Legacy TDD state cleaned up"
 fi
 
 # Finalize and archive ticket state
 echo -e "\n${WORKING} Finalizing ticket state..."
-jq '.phase = "completed" | .completed_at = now | .completed_at |= todate | .archived_to = $archived | .branch_deleted = true | .cleanup_completed = true' \
+jq '.status = "completed" | .completed_at = now | .completed_at |= todate | .archived_to = $archived | .branch_deleted = true | .cleanup_completed = true' \
    --arg archived "$historical_path" \
-   .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
-mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
+   "$CURRENT_TICKET_FILE" > "$CURRENT_TICKET_FILE.tmp"
+mv "$CURRENT_TICKET_FILE.tmp" "$CURRENT_TICKET_FILE"
 
 # Archive the final ticket state
-mkdir -p .spectrum/completed-tickets
-ticket_state_archive=".spectrum/completed-tickets/$ticket_id-$(date +%Y%m%d-%H%M%S).json"
-cp .tmp/current-ticket.json "$ticket_state_archive"
+ticket_state_archive=".spectrum/archive/completed-tickets/$ticket_id-$(date +%Y%m%d-%H%M%S).json"
+cp "$CURRENT_TICKET_FILE" "$ticket_state_archive"
 echo -e "${SUCCESS} Final ticket state archived to: $ticket_state_archive"
 
 # Clean up current ticket state - ready for next assignment
-rm -f .tmp/current-ticket.json
+rm -f "$CURRENT_TICKET_FILE"
 echo -e "${SUCCESS} Current ticket state cleaned up"
+
+# Clean up discovery state files to allow fresh ticket discovery
+echo -e "\n${WORKING} Clearing discovery state for next ticket..."
+rm -f "$SPECTRUM_STATE_DIR/discovery-cache.json" "$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+# Clean up legacy state files for backward compatibility
+rm -f .tmp/spectrum-ticket-info.json .tmp/discovered-ticket-details.md .tmp/current-tdd-cycle.json
+echo -e "${SUCCESS} Discovery state cleared"
 
 # Clean up any remaining workflow files
 if [[ -f ".spectrum/current-cycle.json" ]]; then
     rm -f .spectrum/current-cycle.json
 fi
 
-# Notify {AGENT_GREEN} that ticket is complete and ready for next assignment
-echo -e "\n${WORKING} Notifying {AGENT_GREEN} of completion..."
-notification_message="@{AGENT_GREEN} $ticket_id is complete and delivered! 🎉
+# Notify Agent-Knowledge that ticket is complete and ready for next assignment
+echo -e "\n${WORKING} Notifying Agent-Knowledge of completion..."
+notification_message="@Agent-Knowledge $ticket_id is complete and delivered! 🎉
 
 ✅ $ticket_title
 ✅ PR merged with all quality gates passed: $pr_url
@@ -227,10 +287,10 @@ Current status: Available for new work
 Domain expertise: C# API development, .NET ecosystem, fintech integrations"
 
 if python3 .tools/slack_rest_client.py send_message "$notification_message" >/dev/null 2>&1; then
-    echo -e "${SUCCESS} {AGENT_GREEN} notified of completion"
+    echo -e "${SUCCESS} Agent-Knowledge notified of completion"
 else
-    echo -e "${YELLOW} Warning: Could not notify {AGENT_GREEN} (Slack API unavailable)"
-    echo -e "${INFO} Please manually notify {AGENT_GREEN} that $ticket_id is complete"
+    echo -e "${YELLOW} Warning: Could not notify Agent-Knowledge (Slack API unavailable)"
+    echo -e "${INFO} Please manually notify Agent-Knowledge that $ticket_id is complete"
 fi
 
 # SAFETY REMINDER: This script completed without modifying working directories
@@ -255,5 +315,10 @@ echo "  🔄 Workflow state: Reset for next assignment"
 echo "  🌳 Git state: On dev branch with latest changes"
 echo ""
 echo -e "${SUCCESS} ${GREEN}READY FOR NEXT TICKET ASSIGNMENT!${NC}"
-echo -e "${INFO} {AGENT_GREEN} can now assign new tickets"
+echo -e "${INFO} Agent-Knowledge can now assign new tickets"
 echo -e "${INFO} Run './.tools/commands/start-ticket' when new assignment received"
+echo ""
+echo -e "${YELLOW}=== AI AGENT PROMPT ===${NC}"
+echo -e "${INFO} ${YELLOW}AI Agent: Consider sending additional update to Agent-Knowledge:${NC}"
+echo "  python .tools/slack_rest_client.py send_message \"@Agent-Knowledge [your custom message]\""
+echo -e "${INFO} Use this if you want to send specific details about the completed work"

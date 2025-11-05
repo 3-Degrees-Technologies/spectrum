@@ -18,15 +18,21 @@ TEST="🧪"
 echo -e "${REFACTOR} ${BLUE}TDD REFACTOR${NC}: Automated quality improvements"
 
 # Check if we're in a TDD cycle
-tdd_state_file=".spectrum/tdd/current-cycle.json"
-if [[ ! -f "$tdd_state_file" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+TDD_STATE_FILE="$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR"
+
+if [[ ! -f "$TDD_STATE_FILE" ]]; then
     echo -e "${ERROR} No active TDD cycle found"
     echo -e "${INFO} Please run tdd-green first"
     exit 1
 fi
 
 # Load TDD state
-tdd_state=$(cat "$tdd_state_file")
+tdd_state=$(cat "$TDD_STATE_FILE")
 cycle_number=$(echo "$tdd_state" | jq -r '.cycle_number')
 current_phase=$(echo "$tdd_state" | jq -r '.phase')
 test_description=$(echo "$tdd_state" | jq -r '.test_description')
@@ -45,8 +51,8 @@ echo -e "${INFO} Ticket: ${BLUE}$ticket_id${NC}"
 echo -e "${INFO} Test: $test_description"
 
 # Update TDD state to REFACTOR phase
-jq '.phase = "refactor" | .refactor_started = now | .refactor_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "refactor" | .refactor_started = now | .refactor_started |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 # Get list of files modified in this TDD cycle
 echo -e "\n${WORKING} Analyzing files modified in GREEN phase..."
@@ -54,8 +60,8 @@ modified_files=$(git diff --name-only HEAD~1 2>/dev/null | grep "\.cs$" || true)
 
 if [[ -z "$modified_files" ]]; then
     echo -e "${INFO} No C# files modified in current cycle - skipping refactor"
-    jq '.phase = "refactor-skipped" | .refactor_completed = now | .refactor_completed |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-    mv "$tdd_state_file.tmp" "$tdd_state_file"
+    jq '.phase = "refactor-skipped" | .refactor_completed = now | .refactor_completed |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+    mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
     echo -e "${SUCCESS} Refactor phase complete (no changes needed)"
     echo -e "${INFO} Next: ./.tools/commands/tdd-commit 'commit message'"
     exit 0
@@ -209,8 +215,8 @@ if ! validate_tests; then
 fi
 
 # Update TDD state to completed refactor
-jq '.phase = "refactor-completed" | .refactor_completed = now | .refactor_completed |= todate | .refactor_improvements = $count' --arg count "$refactor_count" "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "refactor-completed" | .refactor_completed = now | .refactor_completed |= todate | .refactor_improvements = $count' --arg count "$refactor_count" "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 echo -e "\n${SUCCESS} ${BLUE}TDD REFACTOR COMPLETE${NC}"
 echo -e "${INFO} Summary:"

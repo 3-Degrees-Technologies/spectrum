@@ -27,14 +27,37 @@ echo -e "${TEST} ${RED}TDD RED CYCLE${NC}: Writing failing test"
 echo -e "${INFO} Test: $test_description"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".tmp/current-ticket.json" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+TDD_STATE_FILE="$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR" ".spectrum/archive/tdd-history"
+
+if [[ ! -f "$CURRENT_TICKET_FILE" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
     echo -e "${INFO} Please run './.tools/commands/start-ticket' first"
     exit 1
 fi
 
+# CRITICAL: Validate that start-ticket completed successfully
+if ! jq -e '.status == "in_progress" and .started_at != null and .branch != null' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+    echo -e "${ERROR} ${RED}FATAL: Invalid ticket workflow state${NC}"
+    echo -e "${INFO} ${RED}start-ticket command did not complete successfully${NC}"
+    echo ""
+    echo -e "${ERROR} ${RED}TDD CYCLES CANNOT PROCEED ON CONTAMINATED WORKSPACE${NC}"
+    echo -e "${INFO} Required actions:"
+    echo -e "${INFO} 1. Fix any issues preventing start-ticket from completing"
+    echo -e "${INFO} 2. Re-run start-ticket until it succeeds 100% without errors"
+    echo -e "${INFO} 3. NEVER run TDD commands without successful workspace initialization"
+    echo ""
+    echo -e "${ERROR} ${RED}NO TDD WORK ALLOWED UNTIL WORKSPACE IS PROPERLY INITIALIZED${NC}"
+    exit 1
+fi
+
 # Load current ticket context
-ticket_info=$(cat .tmp/current-ticket.json)
+ticket_info=$(cat "$CURRENT_TICKET_FILE")
 ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
 domain=$(echo "$ticket_info" | jq -r '.domain')
 current_phase=$(echo "$ticket_info" | jq -r '.phase')
@@ -42,12 +65,11 @@ current_phase=$(echo "$ticket_info" | jq -r '.phase')
 echo -e "${INFO} Current ticket: ${BLUE}$ticket_id${NC} (Domain: $domain)"
 
 # TDD Cycle State Management
-mkdir -p .spectrum/tdd
-tdd_state_file=".spectrum/tdd/current-cycle.json"
+# Use the unified TDD state file from earlier definition
 
 # Initialize or load TDD cycle count
-if [[ -f "$tdd_state_file" ]]; then
-    cycle_number=$(jq -r '.cycle_number' "$tdd_state_file")
+if [[ -f "$TDD_STATE_FILE" ]]; then
+    cycle_number=$(jq -r '.cycle_number' "$TDD_STATE_FILE")
     cycle_number=$((cycle_number + 1))
 else
     cycle_number=1
@@ -55,14 +77,19 @@ fi
 
 echo -e "${CYCLE} Starting TDD Cycle #$cycle_number"
 
+# Note: Baseline creation removed - was destructively stashing user work
+echo -e "${INFO} TDD cycle starting (baseline creation disabled for safety)..."
+baseline_created=false
+
 # Save TDD state
-cat > "$tdd_state_file" << EOF
+cat > "$TDD_STATE_FILE" << EOF
 {
   "cycle_number": $cycle_number,
   "phase": "red",
   "test_description": "$test_description",
   "started": "$(date -Iseconds)",
-  "ticket": "$ticket_id"
+  "ticket": "$ticket_id",
+  "baseline_created": $baseline_created
 }
 EOF
 
@@ -76,6 +103,55 @@ echo "  ✅ Run the NEW test to confirm it fails with expected error"
 echo "  ❌ Do NOT worry about existing failing tests - they're not part of this cycle"
 echo ""
 echo -e "${ERROR} ${YELLOW}VIOLATION OF TDD DISCIPLINE IS UNACCEPTABLE${NC}"
+echo ""
+
+# Requirement analysis prompt
+echo -e "${INFO} ${BLUE}REQUIREMENT ANALYSIS - Answer these questions first:${NC}"
+echo "  1. What BEHAVIOR are you testing? (not 'test validation' - what validation rule?)"
+echo "  2. What inputs should SUCCEED? (list at least 2 different valid cases)"
+echo "  3. What inputs should FAIL? (list at least 2 different invalid cases)"
+echo "  4. How can you PREVENT hardcoding? (mix true/false results? specific values?)"
+echo ""
+echo -e "${YELLOW}Do NOT proceed to write test until you answer these questions${NC}"
+echo ""
+
+# Anti-gaming pattern guidance - ENHANCED
+echo -e "${ERROR} ${RED}ANTI-GAMING WARNING - CRITICAL:${NC}"
+echo ""
+echo -e "${RED}❌ WRONG - Single Assertion Pattern (Can be gamed):${NC}"
+echo "  [Test]"
+echo "  public void ValidateSortCode_ValidInput_ReturnsTrue()"
+echo "  {"
+echo "      Assert.IsTrue(mapper.ValidateSortCode(\"12-34-56\"));"
+echo "      // Can be satisfied with: return true; ← GAMING!"
+echo "  }"
+echo ""
+echo -e "${RED}❌ WRONG - Theory/InlineData Pattern (Separate tests):${NC}"
+echo "  [Theory]"
+echo "  [InlineData(\"12-34-56\", true)]  // Can hardcode true"
+echo "  [InlineData(\"invalid\", false)]  // Can hardcode false"
+echo "  public void ValidateSortCode(string input, bool expected)"
+echo "  {"
+echo "      Assert.Equal(expected, mapper.ValidateSortCode(input));"
+echo "  }"
+echo ""
+echo -e "${GREEN}✅ CORRECT - One Behavior, Multiple Mixed Assertions:${NC}"
+echo "  [Test]"
+echo "  public void ValidateSortCode_ShouldValidateFormatCorrectly()"
+echo "  {"
+echo "      // Valid cases (cannot hardcode true)"
+echo "      Assert.IsTrue(mapper.ValidateSortCode(\"12-34-56\"));"
+echo "      Assert.IsTrue(mapper.ValidateSortCode(\"99-88-77\"));"
+echo "      "
+echo "      // Invalid cases (cannot hardcode false)"
+echo "      Assert.IsFalse(mapper.ValidateSortCode(\"invalid\"));"
+echo "      Assert.IsFalse(mapper.ValidateSortCode(\"12-34-567\"));"
+echo "      Assert.IsFalse(mapper.ValidateSortCode(\"ab-cd-ef\"));"
+echo "      "
+echo "      // Mixed true/false forces REAL validation logic"
+echo "  }"
+echo ""
+echo -e "${YELLOW}KEY PRINCIPLE: One behavior test with mixed assertions prevents gaming${NC}"
 echo ""
 
 # Show current test structure to help identify where to add test
@@ -93,24 +169,69 @@ echo ""
 echo -e "${YELLOW}=== REQUIRED: Write ONE NEW Failing Test ===${NC}"
 echo -e "${INFO} 1. Choose appropriate test file (or create new one)"
 echo -e "${INFO} 2. Write ONE test method for: '$test_description'"
-echo -e "${INFO} 3. Test should verify functionality that doesn't exist yet"
-echo -e "${INFO} 4. Run the test to confirm it fails as expected"
-echo -e "${INFO} 5. Do NOT modify any existing tests in this cycle"
+echo -e "${INFO} 3. Test should verify ONE BEHAVIOR (not one scenario)"
+echo -e "${INFO} 4. Include MULTIPLE assertions with MIXED expected results"
+echo -e "${INFO} 5. Run the test to confirm it fails as expected"
+echo -e "${INFO} 6. Do NOT modify any existing tests in this cycle"
 echo ""
-echo -e "${INFO} Example test structure:"
+echo -e "${INFO} ${GREEN}AI-OPTIMIZED TEST PATTERNS (Behavior-Focused):${NC}"
+echo ""
+echo -e "${YELLOW}Pattern 1: Validation Behavior (Mixed Valid/Invalid)${NC}"
 echo "  [Test]"
-echo "  public void ${test_description// /_}()"
+echo "  public void Validate[Field]_ShouldEnforce[Rule]Correctly()"
 echo "  {"
-echo "      // Arrange - setup test data"
-echo "      // Act - call the method/feature being tested"
-echo "      // Assert - verify expected behavior"
+echo "      // Valid cases - at least 2 different inputs"
+echo "      Assert.IsTrue(validator.Validate(\"valid_case_1\"));"
+echo "      Assert.IsTrue(validator.Validate(\"valid_case_2\"));"
+echo "      "
+echo "      // Invalid cases - at least 2 different inputs"
+echo "      Assert.IsFalse(validator.Validate(\"invalid_case_1\"));"
+echo "      Assert.IsFalse(validator.Validate(\"invalid_case_2\"));"
+echo "      "
+echo "      // BEHAVIOR: Enforces [specific rule] correctly"
+echo "      // PREVENTS: return true; or return false; gaming"
 echo "  }"
+echo ""
+echo -e "${YELLOW}Pattern 2: Boundary Behavior${NC}"
+echo "  [Test]"
+echo "  public void ValidateAmount_ShouldEnforceLimitsBehavior()"
+echo "  {"
+echo "      Assert.IsFalse(validator.ValidateAmount(0.00m));     // Below min"
+echo "      Assert.IsTrue(validator.ValidateAmount(0.01m));      // At min"
+echo "      Assert.IsTrue(validator.ValidateAmount(100.00m));    // Normal"
+echo "      Assert.IsTrue(validator.ValidateAmount(10000.00m));  // At max"
+echo "      Assert.IsFalse(validator.ValidateAmount(10000.01m)); // Above max"
+echo "      "
+echo "      // BEHAVIOR: Enforces min/max limits"
+echo "      // PREVENTS: Hardcoded returns at any boundary"
+echo "  }"
+echo ""
+echo -e "${YELLOW}Pattern 3: Transformation Behavior${NC}"
+echo "  [Test]"
+echo "  public void MapData_ShouldTransformAllFieldsCorrectly()"
+echo "  {"
+echo "      var result = mapper.Transform(createTestInput());"
+echo "      "
+echo "      // Test multiple fields with specific values"
+echo "      Assert.AreEqual(\"expected_value_1\", result.Field1);"
+echo "      Assert.AreEqual(\"expected_value_2\", result.Field2);"
+echo "      Assert.AreEqual(123, result.Field3);"
+echo "      "
+echo "      // BEHAVIOR: Maps all fields correctly"
+echo "      // PREVENTS: Hardcoded single-field returns"
+echo "  }"
+echo ""
+echo -e "${RED}⚠️  AVOID [Theory] and [InlineData] - they create separate tests per scenario${NC}"
+echo -e "${GREEN}✅  USE [Test] with multiple assertions - one behavior, many cases${NC}"
 echo ""
 
 # Wait for confirmation that test is written
 echo -e "${TEST} After writing the new test:"
 # AI Agent: Automatically proceed with test verification
 echo -e "${INFO} AI Agent: Proceeding with automated failing test verification..."
+
+# Anti-pattern checking will be done after test is written
+
 
 echo -e "\n${WORKING} Running tests to verify RED state..."
 
@@ -125,23 +246,49 @@ echo "  ✅ The failure indicates missing functionality (not code errors)"
 echo "  ⚠️  Existing tests may fail temporarily - that's OK during TDD"
 echo ""
 
-# AI Agent: Assume test fails as expected for automated workflow
-echo -e "${INFO} AI Agent: Assuming test fails as expected (automated workflow)"
-test_confirmed="y"
+# CRITICAL: Actually run tests to verify RED state
+echo -e "${WORKING} Running tests to verify RED state..."
+echo -e "${INFO} Looking for test failures that indicate missing functionality..."
 
-if [[ "$test_confirmed" != "y" && "$test_confirmed" != "Y" ]]; then
-    echo -e "${ERROR} Test not confirmed as failing"
-    echo -e "${INFO} Please ensure your test fails for the right reasons before proceeding"
+# Run tests and capture output
+if dotnet test --no-build --verbosity minimal > "$SPECTRUM_TMP_DIR/test-output.log" 2>&1; then
+    echo -e "${ERROR} ${RED}TESTS ARE PASSING - THIS IS NOT A VALID RED STATE${NC}"
+    echo -e "${INFO} In TDD RED phase, your new test should fail because functionality doesn't exist yet"
+    echo -e "${INFO} Common issues:"
+    echo "  - Test is too simple and can be satisfied with existing code"
+    echo "  - Implementation already exists (logic smuggling)"
+    echo "  - Test has bugs and isn't actually testing the intended behavior"
+    echo ""
+    echo -e "${ERROR} Please review your test and ensure it fails for the right reasons"
     exit 1
 fi
 
+# Tests failed - check if it's the right kind of failure
+echo -e "${SUCCESS} Tests are failing (expected for RED phase)"
+echo -e "${INFO} Analyzing test failures..."
+
+# Show recent test output for verification
+echo -e "\n${INFO} ${YELLOW}Recent test failures:${NC}"
+tail -20 "$SPECTRUM_TMP_DIR/test-output.log" | grep -E "(FAIL|Failed|Error)" | head -10
+
+# Verify the failure is due to missing functionality, not test bugs
+echo -e "\n${INFO} ${YELLOW}Verify your test failure indicates missing functionality:${NC}"
+echo "  ✅ Method/class does not exist yet"  
+echo "  ✅ Method exists but returns default/null values"
+echo "  ✅ Validation logic is missing"
+echo "  ❌ Test has syntax errors or compilation issues"
+echo "  ❌ Test depends on unrelated failing tests"
+
+echo -e "\n${SUCCESS} Automatically confirming test failure as valid RED state"
+echo -e "${INFO} Proceeding with assumption that test failure indicates missing functionality"
+
 # Update TDD state to confirmed RED
-jq '.phase = "red-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "red-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 # Update ticket state
-jq --arg phase "tdd-red-cycle-$cycle_number" '.phase = $phase' .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
-mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
+jq --arg phase "tdd-red-cycle-$cycle_number" '.phase = $phase' "$CURRENT_TICKET_FILE" > "$CURRENT_TICKET_FILE.tmp"
+mv "$CURRENT_TICKET_FILE.tmp" "$CURRENT_TICKET_FILE"
 
 echo -e "\n${SUCCESS} ${RED}TDD RED CYCLE COMPLETE${NC}"
 echo -e "${INFO} Summary:"

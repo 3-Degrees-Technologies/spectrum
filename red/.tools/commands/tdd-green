@@ -18,24 +18,46 @@ CODE="💻"
 echo -e "${TEST} ${GREEN}TDD GREEN CYCLE${NC}: Making the test pass"
 
 # Check if we're in a TDD cycle
-tdd_state_file=".spectrum/tdd/current-cycle.json"
-if [[ ! -f "$tdd_state_file" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+TDD_STATE_FILE="$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR"
+
+if [[ ! -f "$TDD_STATE_FILE" ]]; then
     echo -e "${ERROR} No active TDD cycle found"
     echo -e "${INFO} Please run './.tools/commands/tdd-red \"test description\"' first"
     exit 1
 fi
 
+# CRITICAL: Validate that start-ticket completed successfully (check via current ticket file)
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+if [[ ! -f "$CURRENT_TICKET_FILE" ]] || ! jq -e '.status == "in_progress" and .started_at != null and .branch != null' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+    echo -e "${ERROR} ${RED}FATAL: Invalid ticket workflow state${NC}"
+    echo -e "${INFO} ${RED}start-ticket command did not complete successfully${NC}"
+    echo ""
+    echo -e "${ERROR} ${RED}TDD GREEN CYCLE CANNOT PROCEED ON CONTAMINATED WORKSPACE${NC}"
+    echo -e "${INFO} Required actions:"
+    echo -e "${INFO} 1. Fix any issues preventing start-ticket from completing"
+    echo -e "${INFO} 2. Re-run start-ticket until it succeeds 100% without errors"
+    echo -e "${INFO} 3. Re-run tdd-red to restart the TDD cycle properly"
+    echo ""
+    echo -e "${ERROR} ${RED}NO TDD WORK ALLOWED UNTIL WORKSPACE IS PROPERLY INITIALIZED${NC}"
+    exit 1
+fi
+
 # Load TDD state
-tdd_state=$(cat "$tdd_state_file")
+tdd_state=$(cat "$TDD_STATE_FILE")
 cycle_number=$(echo "$tdd_state" | jq -r '.cycle_number')
 current_phase=$(echo "$tdd_state" | jq -r '.phase')
 test_description=$(echo "$tdd_state" | jq -r '.test_description')
 ticket_id=$(echo "$tdd_state" | jq -r '.ticket')
 
-# Validate we're coming from RED phase
-if [[ "$current_phase" != "red-confirmed" ]]; then
+# Validate we're coming from RED phase or continuing GREEN phase
+if [[ "$current_phase" != "red-confirmed" && "$current_phase" != "green" ]]; then
     echo -e "${ERROR} Invalid TDD state: $current_phase"
-    echo -e "${INFO} Expected: red-confirmed (after running tdd-red)"
+    echo -e "${INFO} Expected: red-confirmed (after running tdd-red) or green (resuming)"
     echo -e "${INFO} Current test: $test_description"
     echo -e "${INFO} Please complete the RED cycle first"
     exit 1
@@ -45,20 +67,35 @@ echo -e "${INFO} TDD Cycle #$cycle_number - GREEN Phase"
 echo -e "${INFO} Ticket: ${BLUE}$ticket_id${NC}"
 echo -e "${INFO} Test: $test_description"
 
-# Update TDD state to GREEN phase
-jq '.phase = "green" | .green_started = now | .green_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+# Update TDD state to GREEN phase (only set timestamp on initial transition)
+if [[ "$current_phase" == "red-confirmed" ]]; then
+    # Initial RED -> GREEN transition
+    jq '.phase = "green" | .green_started = now | .green_started |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+    mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
+    echo -e "${INFO} Transitioned from RED to GREEN phase"
+else
+    # Resuming existing GREEN phase - don't update timestamp
+    jq '.phase = "green"' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+    mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
+    echo -e "${INFO} Resuming GREEN phase (timestamp preserved)"
+fi
 
 # Show TDD GREEN guidelines from AI-DEVELOPMENT-GUIDE
 echo -e "\n${INFO} ${YELLOW}TDD GREEN Phase Guidelines from AI-DEVELOPMENT-GUIDE:${NC}"
 echo -e "${INFO} ${GREEN}GREEN PHASE RULES:${NC}"
-echo "  ✅ Write minimal code to make ONLY the new test pass"
-echo "  ✅ Do NOT worry about existing failing tests - they're not part of this cycle"
-echo "  ✅ Avoid implementing extra features or perfect code"
-echo "  ✅ Focus on making the specific test pass, nothing more"
+echo "  ✅ Implement COMPLETE behavior to make the new test pass"
+echo "  ✅ Handle ALL test scenarios (valid/invalid cases, boundaries)"
+echo "  ✅ Use real logic - NO hardcoded returns or obvious stubs"
+echo "  ✅ Focus on this specific behavior only - don't implement untested features"
 echo "  ⚠️  Existing tests may break temporarily - that's OK during TDD cycles"
 echo ""
-echo -e "${YELLOW} Key Principle: Implement minimal code to satisfy the test requirement${NC}"
+echo -e "${ERROR} ${RED}ANTI-GAMING ENFORCEMENT:${NC}"
+echo "  ❌ Do NOT write: return true; // to make test pass"
+echo "  ❌ Do NOT hardcode expected values"
+echo "  ❌ Do NOT use obvious stubs that avoid real implementation"
+echo "  ✅ Write production-ready logic for this specific behavior"
+echo ""
+echo -e "${YELLOW} Key Principle: Complete behavior implementation that cannot be gamed${NC}"
 echo ""
 
 # Show current project structure to help identify where to add implementation
@@ -73,11 +110,11 @@ fi
 echo ""
 echo -e "${CODE} ${YELLOW}AI Agent: You must now implement minimal code to make the test pass:${NC}"
 echo ""
-echo -e "${YELLOW}=== REQUIRED: Implement Minimal Code ===${NC}"
-echo -e "${INFO} 1. Identify what code is needed to make your test pass"
-echo -e "${INFO} 2. Implement ONLY the minimal code required"
-echo -e "${INFO} 3. Do NOT add extra features or perfect implementations"
-echo -e "${INFO} 4. Focus on the specific test: '$test_description'"
+echo -e "${YELLOW}=== REQUIRED: Implement Complete Behavior ===${NC}"
+echo -e "${INFO} 1. Analyze your test to understand the complete behavior required"
+echo -e "${INFO} 2. Implement production-ready logic that handles ALL test scenarios"
+echo -e "${INFO} 3. Use real validation/transformation logic, not hardcoded returns"
+echo -e "${INFO} 4. Focus only on behavior covered by: '$test_description'"
 echo -e "${INFO} 5. Follow AI-optimized file organization (context density)"
 echo ""
 
@@ -110,14 +147,100 @@ echo "  ✅ Implementation satisfies the test requirement"
 echo "  ⚠️  Other tests may still fail - focus only on your new test for now"
 echo ""
 
-# AI Agent: Assume test passes for automated workflow
-echo -e "${INFO} AI Agent: Assuming test passes (automated workflow)"
-test_passes="y"
+# CRITICAL: Actually run tests to verify GREEN state and detect gaming
+echo -e "${WORKING} Running tests to verify GREEN state and detect gaming attempts..."
 
-if [[ "$test_passes" != "y" && "$test_passes" != "Y" ]]; then
-    echo -e "${ERROR} Test not passing"
-    echo -e "${INFO} Please implement code to make your test pass before proceeding"
-    echo -e "${INFO} Remember: minimal implementation, just enough to satisfy the test"
+# Check for logic smuggling by comparing against RED phase baseline
+baseline_created=$(echo "$tdd_state" | jq -r '.baseline_created // false')
+
+if [[ "$baseline_created" == "true" ]]; then
+    echo -e "${INFO} Checking for logic smuggling since RED phase..."
+    
+    # Compare current implementation against RED baseline
+    if git diff stash@{0} --name-only -- "src/" | grep -q "."; then
+        echo -e "${YELLOW} Implementation files changed since RED phase:"
+        git diff stash@{0} --name-only -- "src/" | head -5 | sed 's/^/  - /'
+        
+        # Check if changes are in implementation files vs test files
+        impl_changes=$(git diff stash@{0} --name-only -- "src/" | grep -v -E "(Test|Tests)" | wc -l)
+        test_changes=$(git diff stash@{0} --name-only -- "tests/" | wc -l)
+        
+        if [[ $impl_changes -gt 0 && $test_changes -eq 0 ]]; then
+            echo -e "${YELLOW} Warning: Implementation changes without test changes detected"
+            echo -e "${INFO} This could indicate logic smuggling - adding features without tests"
+        fi
+    else
+        echo -e "${SUCCESS} No implementation smuggling detected since RED phase"
+    fi
+fi
+
+# Run tests and capture output
+if ! dotnet test --no-build --verbosity minimal > "$SPECTRUM_TMP_DIR/test-output.log" 2>&1; then
+    echo -e "${ERROR} ${RED}TESTS ARE STILL FAILING${NC}"
+    echo -e "${INFO} Your implementation has not made the test pass yet"
+    echo ""
+    echo -e "${INFO} ${YELLOW}Recent test failures:${NC}"
+    tail -20 "$SPECTRUM_TMP_DIR/test-output.log" | grep -E "(FAIL|Failed|Error)" | head -5
+    echo ""
+    echo -e "${ERROR} Please complete your implementation to make the test pass"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Tests are now passing!"
+
+# Gaming detection: Look for obvious gaming patterns in recent git changes
+echo -e "${WORKING} Checking for gaming patterns in implementation..."
+
+# Check recent changes for gaming patterns
+if git diff HEAD~1 --name-only | grep -q "src/"; then
+    echo -e "${INFO} Analyzing implementation changes for gaming patterns..."
+    
+    # Look for hardcoded returns in method bodies
+    gaming_patterns_found=false
+    
+    if git diff HEAD~1 -- "src/" | grep -qE "return (true|false);?\s*$"; then
+        echo -e "${ERROR} ${RED}GAMING PATTERN DETECTED: Hardcoded boolean return${NC}"
+        git diff HEAD~1 -- "src/" | grep -E "return (true|false);?\s*$" | head -3
+        gaming_patterns_found=true
+    fi
+    
+    if git diff HEAD~1 -- "src/" | grep -qE "return \"[^\"]*\";\s*$"; then
+        echo -e "${ERROR} ${RED}GAMING PATTERN DETECTED: Hardcoded string return${NC}" 
+        git diff HEAD~1 -- "src/" | grep -E "return \"[^\"]*\";\s*$" | head -3
+        gaming_patterns_found=true
+    fi
+    
+    if git diff HEAD~1 -- "src/" | grep -qE "return \d+;\s*$"; then
+        echo -e "${ERROR} ${RED}GAMING PATTERN DETECTED: Hardcoded numeric return${NC}"
+        git diff HEAD~1 -- "src/" | grep -E "return \d+;\s*$" | head -3  
+        gaming_patterns_found=true
+    fi
+    
+    if [[ "$gaming_patterns_found" == "true" ]]; then
+        echo ""
+        echo -e "${ERROR} ${RED}GAMING DETECTED - IMPLEMENTATION REJECTED${NC}"
+        echo -e "${INFO} Your implementation appears to use hardcoded returns to game the tests"
+        echo -e "${INFO} Please implement real logic that would work for similar inputs"
+        echo ""
+        echo -e "${INFO} Is this a false positive? Does your implementation use real logic? (y/n)"
+        read -r not_gaming
+        
+        if [[ "$not_gaming" != "y" && "$not_gaming" != "Y" ]]; then
+            echo -e "${ERROR} Please implement real logic instead of gaming the tests"
+            exit 1
+        fi
+    else
+        echo -e "${SUCCESS} No obvious gaming patterns detected"
+    fi
+else
+    echo -e "${INFO} No source file changes detected - may indicate test-only modifications"
+fi
+
+echo -e "\n${INFO} Final verification: Does your implementation use real logic (not hardcoded values)? (y/n)"  
+read -r real_implementation
+
+if [[ "$real_implementation" != "y" && "$real_implementation" != "Y" ]]; then
+    echo -e "${ERROR} Please implement real logic instead of gaming the tests"
     exit 1
 fi
 
@@ -142,8 +265,8 @@ if [[ "$has_critical_issues" == "y" || "$has_critical_issues" == "Y" ]]; then
 fi
 
 # Update TDD state to confirmed GREEN
-jq '.phase = "green-confirmed" | .green_confirmed = true | .green_confirmed_at = now | .green_confirmed_at |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "green-confirmed" | .green_confirmed = true | .green_confirmed_at = now | .green_confirmed_at |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 echo -e "\n${SUCCESS} ${GREEN}TDD GREEN CYCLE COMPLETE${NC}"
 echo -e "${INFO} Summary:"

@@ -18,15 +18,22 @@ INTEGRATION="🔗"
 echo -e "${TEST} ${BLUE}INTEGRATION REFACTOR CYCLE${NC}: Enhancing the test"
 
 # Check if we have a test state
-if [[ ! -f ".tmp/integration-test-state.json" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+INTEGRATION_STATE_FILE="$SPECTRUM_STATE_DIR/integration-test-state.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR"
+
+if [[ ! -f "$INTEGRATION_STATE_FILE" ]]; then
     echo -e "${ERROR} No integration test state found. Please run ./integration-red first"
     exit 1
 fi
 
 # Read test state
-test_file=$(jq -r '.test_file' .tmp/integration-test-state.json)
-test_description=$(jq -r '.test_description' .tmp/integration-test-state.json)
-phase=$(jq -r '.phase' .tmp/integration-test-state.json)
+test_file=$(jq -r '.test_file' "$INTEGRATION_STATE_FILE")
+test_description=$(jq -r '.test_description' "$INTEGRATION_STATE_FILE")
+phase=$(jq -r '.phase' "$INTEGRATION_STATE_FILE")
 
 echo -e "${INFO} Test: $test_description"
 echo -e "${INFO} File: $test_file"
@@ -149,8 +156,8 @@ echo -e "  3. Check that error scenarios fail appropriately"
 echo -e "  4. Review test documentation completeness"
 
 # Update test state
-jq '.phase = "refactor"' .tmp/integration-test-state.json > .tmp/integration-test-state.json.tmp
-mv .tmp/integration-test-state.json.tmp .tmp/integration-test-state.json
+jq '.phase = "refactor"' $INTEGRATION_STATE_FILE > $INTEGRATION_STATE_FILE.tmp
+mv $INTEGRATION_STATE_FILE.tmp $INTEGRATION_STATE_FILE
 
 echo -e "\n${SUCCESS} Integration test ready for refactoring!"
 echo -e "${INFO} Edit: $test_file"

@@ -97,5 +97,53 @@ if [[ -d ".tools" ]]; then
     export PATH="$(pwd)/.tools:$PATH"
 fi
 
+# Set up automatic agent registration in the background
+setup_auto_registration() {
+    local color="$1"
+    
+    # Create a background script that waits for OpenCode to start, then registers
+    cat > /tmp/auto-register-${color}-$$.sh << 'EOF'
+#!/bin/bash
+AGENT_COLOR="$1"
+WORK_DIR="$2"
+
+# Wait for OpenCode to start and get a port (max 30 seconds)
+for i in {1..30}; do
+    sleep 1
+    
+    # Look for this process's OpenCode port
+    OPENCODE_PID=$PPID
+    PORT=$(netstat -tulnp 2>/dev/null | grep "$OPENCODE_PID/opencode" | awk '{print $4}' | cut -d: -f2 | head -1)
+    
+    if [[ -n "$PORT" ]]; then
+        
+        # Change to the agent directory to run the registration script
+        cd "$WORK_DIR"
+        
+        # Run the registration script if it exists
+        if [[ -f ".tools/agent-register.sh" ]]; then
+            .tools/agent-register.sh --color "$AGENT_COLOR" --port "$PORT" 2>/dev/null || true
+        fi
+        break
+    fi
+done
+
+# Clean up this script
+rm -f "/tmp/auto-register-${AGENT_COLOR}-$$.sh"
+EOF
+    
+    chmod +x "/tmp/auto-register-${color}-$$.sh"
+    
+    # Start the registration script in the background
+    "/tmp/auto-register-${color}-$$.sh" "$color" "$(pwd)" &
+}
+
 echo "🚀 Starting OpenCode in $(pwd)..."
+
+# Set up auto-registration before starting OpenCode
+if [[ -f ".tools/agent-register.sh" ]]; then
+    echo "🔗 Setting up automatic Slack notification registration..."
+    setup_auto_registration "$AGENT_COLOR"
+fi
+
 exec opencode

@@ -3,6 +3,9 @@
 Consolidated Slack Bridge - Single file daemon
 Combines all daemon functionality with color-based agent identification
 """
+
+# VERSION TRACKING
+PUENTE_VERSION = "2.2.2-timestamp-precision-fix"
 import asyncio
 import json
 import logging
@@ -18,11 +21,7 @@ import aiohttp
 from aiohttp import web, ClientSession
 from aiohttp.web import Request, Response, json_response
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Logging will be configured later when config is loaded
 logger = logging.getLogger(__name__)
 
 def convert_markdown_to_slack(text: str) -> str:
@@ -30,7 +29,7 @@ def convert_markdown_to_slack(text: str) -> str:
     Convert markdown formatting to Slack formatting
     **bold** -> *bold*
     *italic* -> _italic_ 
-    `code` -> `code` (unchanged)
+    `code` -> ```code```
     ```code block``` -> ```code block``` (unchanged)
     """
     import re
@@ -47,7 +46,10 @@ def convert_markdown_to_slack(text: str) -> str:
     # Step 2: *italic* -> _italic_ (now safe from **bold** interference)
     text = re.sub(r'\*([^*]+?)\*', r'_\1_', text)
     
-    # Step 3: Restore **bold** as *bold*
+    # Step 3: `code` -> ```code``` (single backticks to triple backticks)
+    text = re.sub(r'`([^`]+?)`', r'```\1```', text)
+    
+    # Step 4: Restore **bold** as *bold*
     for i, bold_content in enumerate(bold_patterns):
         text = text.replace(f"__BOLD_PLACEHOLDER_{i}__", f"*{bold_content}*")
     
@@ -72,9 +74,12 @@ def convert_slack_to_markdown(text: str) -> str:
 
 def replace_agent_mentions(text: str, agent_configs: Dict) -> str:
     """
-    Replace @agent-name mentions with proper Slack user ID mentions
+    Replace @agent-name and @agent-color mentions with proper Slack user ID mentions
     Example: @agent-sam -> <@U096VLDAHJ5>
-    Case-insensitive matching
+    Example: @Agent Sam -> <@U096VLDAHJ5>
+    Example: @Agent-Red -> <@U096VLDAHJ5>
+    Example: @Agent Red -> <@U096VLDAHJ5>
+    Case-insensitive matching with flexible spacing and hyphenation
     """
     import re
     
@@ -82,9 +87,17 @@ def replace_agent_mentions(text: str, agent_configs: Dict) -> str:
         name = config.get("name", "")
         user_id = config.get("bot_user_id", "")
         
-        if name and user_id:
-            # Case-insensitive replacement of @agent-name
-            pattern = f"@{re.escape(name)}"
+        if user_id:
+            # Pattern 1: Match by agent name (if available)
+            if name:
+                flexible_name = re.escape(name).replace(r'\-', r'[\s\-]?')
+                pattern = f"@{flexible_name}"
+                replacement = f"<@{user_id}>"
+                text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+            
+            # Pattern 2: Match by agent color (@Agent-Red, @Agent Red, etc.)
+            flexible_color = re.escape(f"agent-{color}").replace(r'\-', r'[\s\-]?')
+            pattern = f"@{flexible_color}"
             replacement = f"<@{user_id}>"
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     
@@ -93,6 +106,8 @@ def replace_agent_mentions(text: str, agent_configs: Dict) -> str:
 def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_reacted=True, bot_user_id=None):
     """Filter messages for relevance to a specific agent (color or name)"""
     relevant = []
+    
+    logger.info(f"🔍 FILTERING: Checking {len(messages)} messages for agent '{agent_identifier}' (bot_user_id: {bot_user_id})")
     
     # Keywords that indicate team-wide relevance
     team_keywords = [
@@ -114,10 +129,23 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
         f"{agent_identifier.lower()}:"      # red: or agent-sam:
     ]
     
+    # Add more flexible patterns for "Agent Color" format
+    if agent_identifier.lower() in ['red', 'blue', 'green', 'black']:
+        agent_patterns.extend([
+            f"@agent {agent_identifier.lower()}",  # @agent red
+            f"@agent-{agent_identifier.lower()}",  # @agent-red
+            f"@agent{agent_identifier.lower()}",   # @agentred
+        ])
+    
+    logger.info(f"🔍 FILTERING: Looking for patterns: {agent_patterns}")
+    logger.info(f"🔍 FILTERING: Looking for user_id_pattern: {user_id_pattern}")
+    
     for msg in messages:
         text = msg.get("text", "")
         text_lower = text.lower()
         user_id = msg.get("user_id", "")
+        
+        logger.info(f"🔍 FILTERING: Checking message: '{text}' from user {user_id}")
         
         # Check if this specific agent has already reacted to this message
         if exclude_reacted and bot_user_id:
@@ -131,30 +159,34 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
                     break
             
             if agent_reacted:
+                logger.info(f"🔍 FILTERING: Agent already reacted to message, skipping")
                 continue
         
         # Check for team-wide alerts first
         team_match = any(keyword.lower() in text_lower for keyword in team_keywords)
         if team_match:
+            logger.info(f"🔍 FILTERING: ✅ Team-wide match: {text[:50]}...")
             relevant.append(msg)
             continue
             
         # Check for proper Slack user ID mentions first (preferred)
         user_id_match = user_id_pattern and user_id_pattern in text
         if user_id_match:
+            logger.info(f"🔍 FILTERING: ✅ User ID match: {text[:50]}...")
             relevant.append(msg)
             continue
             
-        # Check for agent's own messages (messages from the same bot)
+        # Skip agent's own messages - don't notify on self-sent messages
         own_message = msg.get("user_id") == bot_user_id
         if own_message:
-            relevant.append(msg)
+            logger.info(f"🔍 FILTERING: ❌ Skipping own message: {text[:50]}...")
             continue
             
         # Fallback: Check for legacy text-based patterns (more specific matching)
         message_matched = False
         for pattern in agent_patterns:
             if pattern in text_lower:
+                logger.info(f"🔍 FILTERING: ✅ Pattern match '{pattern}': {text[:50]}...")
                 # Additional validation: make sure this isn't part of another agent's name
                 if pattern.startswith('@'):
                     # For @agent patterns, ensure it's not part of a longer agent name
@@ -166,16 +198,20 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
                             next_char = text_lower[after_pattern_pos]
                             # If followed by a letter/digit, it might be part of another agent name
                             if next_char.isalnum() or next_char == '-':
+                                logger.info(f"🔍 FILTERING: False positive for pattern '{pattern}', next char: '{next_char}'")
                                 continue  # Skip this pattern, might be false positive
                         message_matched = True
                         break
                 else:
                     message_matched = True
                     break
-                    
+        
         if message_matched:
             relevant.append(msg)
+        else:
+            logger.info(f"🔍 FILTERING: ❌ No match: {text[:50]}...")
             
+    logger.info(f"🔍 FILTERING: Found {len(relevant)} relevant messages out of {len(messages)} total")
     return relevant
 
 class SlackAPIClient:
@@ -198,7 +234,7 @@ class SlackAPIClient:
         self.last_cache_update = None
         
         # Session
-        self.session = None
+        self.session: Optional[ClientSession] = None
         
     def _check_rate_limit(self, endpoint_type: str) -> bool:
         """Check if we're within rate limits"""
@@ -253,22 +289,34 @@ class SlackAPIClient:
             if method == "POST":
                 if is_form_data:
                     # For file uploads, use FormData directly
-                    async with self.session.post(url, headers=headers, data=data) as response:
-                        result = await response.json()
+                    if self.session:
+                        async with self.session.post(url, headers=headers, data=data) as response:
+                            result = await response.json()
+                    else:
+                        raise Exception("Session not initialized")
                 else:
                     # For regular API calls - check if endpoint requires form data
                     if endpoint == "files.getUploadURLExternal":
                         # This endpoint expects form data, not JSON
                         headers.pop("Content-Type", None)  # Let aiohttp set the correct content-type
-                        async with self.session.post(url, headers=headers, data=data) as response:
-                            result = await response.json()
+                        if self.session:
+                            async with self.session.post(url, headers=headers, data=data) as response:
+                                result = await response.json()
+                        else:
+                            raise Exception("Session not initialized")
                     else:
                         # Regular JSON API calls (including files.completeUploadExternal)
-                        async with self.session.post(url, headers=headers, json=data) as response:
-                            result = await response.json()
+                        if self.session:
+                            async with self.session.post(url, headers=headers, json=data) as response:
+                                result = await response.json()
+                        else:
+                            raise Exception("Session not initialized")
             else:
-                async with self.session.get(url, headers=headers, params=data) as response:
-                    result = await response.json()
+                if self.session:
+                    async with self.session.get(url, headers=headers, params=data) as response:
+                        result = await response.json()
+                else:
+                    raise Exception("Session not initialized")
             
             # DEBUG: Log response
             logger.info(f"Response from {endpoint}: {result}")
@@ -406,7 +454,7 @@ class SlackAPIClient:
         except Exception as e:
             logger.error(f"Failed to update users cache: {e}")
     
-    async def upload_file(self, file_data: bytes, filename: str, comment: str = "", channel: str = None) -> Dict:
+    async def upload_file(self, file_data: bytes, filename: str, comment: str = "", channel: Optional[str] = None) -> Dict:
         """Upload a file to Slack using files.uploadV2"""
         import aiohttp
         
@@ -430,16 +478,19 @@ class SlackAPIClient:
         logger.info(f"Got upload URL and file_id: {file_id}")
         
         # Step 2: Upload file to the URL
-        async with self.session.post(upload_url, data=file_data) as response:
-            if response.status != 200:
-                response_text = await response.text()
-                logger.error(f"File upload failed: {response.status} - {response_text}")
-                raise ValueError(f"Failed to upload file: {response.status}")
+        if self.session:
+            async with self.session.post(upload_url, data=file_data) as response:
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(f"File upload failed: {response.status} - {response_text}")
+                    raise ValueError(f"Failed to upload file: {response.status}")
+        else:
+            raise Exception("Session not initialized")
         
         logger.info("File uploaded successfully, completing...")
         
         # Step 3: Complete the upload
-        complete_params = {
+        complete_params: Dict[str, Any] = {
             "files": [{"id": file_id, "title": filename}]
         }
         
@@ -457,9 +508,9 @@ class SlackAPIClient:
             "files": result.get("files", [])
         }
     
-    async def list_files(self, channel: str = None, limit: int = 100) -> Dict:
+    async def list_files(self, channel: Optional[str] = None, limit: int = 100) -> Dict:
         """List files from Slack"""
-        params = {"count": limit}
+        params: Dict[str, Any] = {"count": limit}
         if channel:
             params["channel"] = channel
         
@@ -639,6 +690,9 @@ class HTTPServer:
     
     def _setup_routes(self):
         """Setup HTTP routes"""
+        if not self.app:
+            raise RuntimeError("App not initialized")
+            
         # Slack API endpoints
         self.app.router.add_post('/send_message', self._handle_send_message)
         self.app.router.add_get('/get_messages', self._handle_get_messages)
@@ -654,6 +708,11 @@ class HTTPServer:
         
         # Daemon management endpoints
         self.app.router.add_get('/health', self._handle_health_check)
+        
+        # Agent registration endpoints
+        self.app.router.add_post('/register_agent', self._handle_register_agent)
+        self.app.router.add_post('/unregister_agent', self._handle_unregister_agent)
+        self.app.router.add_get('/list_agents', self._handle_list_agents)
         
     def register_handler(self, method: str, handler: Callable):
         """Register a handler for a specific method"""
@@ -785,11 +844,16 @@ class HTTPServer:
             filename = None
             
             async for field in reader:
-                if field.name == 'file':
-                    file_data = await field.read()
-                    filename = field.filename
-                else:
-                    params[field.name] = await field.text()
+                try:
+                    field_name = getattr(field, 'name', None)
+                    if field_name == 'file':
+                        file_data = await field.read()  # type: ignore
+                        filename = getattr(field, 'filename', None)
+                    elif field_name:
+                        params[field_name] = await field.text()  # type: ignore
+                except Exception as e:
+                    logger.warning(f"Error processing multipart field: {e}")
+                    continue
             
             if not file_data:
                 return json_response({"error": "No file provided"}, status=400)
@@ -873,6 +937,57 @@ class HTTPServer:
             logger.error(f"Error in delete_file: {e}")
             return json_response({"error": str(e)}, status=500)
 
+    async def _handle_register_agent(self, request: Request) -> Response:
+        """Handle agent registration POST request"""
+        try:
+            if request.content_type == 'application/json':
+                params = await request.json()
+            else:
+                params = dict(await request.post())
+            
+            if "daemon.register_agent" in self.handlers:
+                result = await self.handlers["daemon.register_agent"](params)
+                return json_response({"success": True, "result": result})
+            else:
+                return json_response({"error": "Handler not registered"}, status=500)
+                
+        except Exception as e:
+            logger.error(f"Error in register_agent: {e}")
+            return json_response({"error": str(e)}, status=500)
+    
+    async def _handle_unregister_agent(self, request: Request) -> Response:
+        """Handle agent unregistration POST request"""
+        try:
+            if request.content_type == 'application/json':
+                params = await request.json()
+            else:
+                params = dict(await request.post())
+            
+            if "daemon.unregister_agent" in self.handlers:
+                result = await self.handlers["daemon.unregister_agent"](params)
+                return json_response({"success": True, "result": result})
+            else:
+                return json_response({"error": "Handler not registered"}, status=500)
+                
+        except Exception as e:
+            logger.error(f"Error in unregister_agent: {e}")
+            return json_response({"error": str(e)}, status=500)
+    
+    async def _handle_list_agents(self, request: Request) -> Response:
+        """Handle list agents GET request"""
+        try:
+            params = {}
+            
+            if "daemon.list_agents" in self.handlers:
+                result = await self.handlers["daemon.list_agents"](params)
+                return json_response({"success": True, "result": result})
+            else:
+                return json_response({"error": "Handler not registered"}, status=500)
+                
+        except Exception as e:
+            logger.error(f"Error in list_agents: {e}")
+            return json_response({"error": str(e)}, status=500)
+
 
 class SlackDaemon:
     """Main Slack daemon with color-based agent management"""
@@ -887,6 +1002,12 @@ class SlackDaemon:
         
         # Default channel from config
         self.default_channel = None
+        
+        # Agent registration tracking - maps color to OpenCode port and per-agent message timestamp
+        self.registered_agents = {}  # {"red": {"port": 44817, "last_seen": timestamp, "last_message_timestamp": "123456.789"}}
+        
+        # Message monitoring for auto-notifications
+        self.monitoring_task = None
         
     async def load_config(self):
         """Load configuration from unified config file"""
@@ -932,8 +1053,10 @@ class SlackDaemon:
             return identifier.lower()
         
         # Check backwards compatibility mapping
-        compat_mapping = self.config.get("backwards_compatibility", {}).get("agent_name_to_color", {})
-        return compat_mapping.get(identifier)
+        if self.config:
+            compat_mapping = self.config.get("backwards_compatibility", {}).get("agent_name_to_color", {})
+            return compat_mapping.get(identifier)
+        return None
     
     def get_agent_name_by_color(self, color: str) -> str:
         """Get agent display name by color"""
@@ -944,7 +1067,13 @@ class SlackDaemon:
         """Start the daemon"""
         await self.load_config()
         
+        # Log version immediately at startup
+        logger.info(f"🚀 PUENTE STARTING: Version {PUENTE_VERSION}")
+        
         # Initialize Slack clients for each color-based agent
+        if not self.config:
+            raise RuntimeError("Configuration not loaded")
+            
         rate_config = self.config["rate_limiting"]
         
         # Set default channel
@@ -957,7 +1086,7 @@ class SlackDaemon:
             if bot_token:
                 self.slack_clients[color] = SlackAPIClient(
                     bot_token=bot_token,
-                    app_token=None,  # Not needed for REST API approach
+                    app_token="",  # Not needed for REST API approach
                     rate_limit_config=rate_config
                 )
                 logger.info(f"Created Slack client for {color} agent ({agent_config.get('name')})")
@@ -988,6 +1117,9 @@ class SlackDaemon:
         # Setup signal handlers
         self._setup_signal_handlers()
         
+        # Start message monitoring for auto-notifications
+        self.monitoring_task = asyncio.create_task(self._monitor_and_notify())
+        
         # Keep running
         try:
             while self.is_running:
@@ -1001,6 +1133,14 @@ class SlackDaemon:
         """Stop the daemon"""
         logger.info("Stopping Slack daemon...")
         self.is_running = False
+        
+        # Stop monitoring task
+        if self.monitoring_task:
+            self.monitoring_task.cancel()
+            try:
+                await self.monitoring_task
+            except asyncio.CancelledError:
+                pass
         
         if self.http_server:
             await self.http_server.stop()
@@ -1021,6 +1161,229 @@ class SlackDaemon:
         
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+    
+    async def _monitor_and_notify(self):
+        """Monitor for new messages and automatically notify registered agents"""
+        logger.info(f"📡 MONITORING STARTING: Version {PUENTE_VERSION} - Starting message monitoring for auto-notifications...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(5)  # Check every 5 seconds
+                
+                if not self.registered_agents:
+                    continue
+                
+                # Get recent messages - each agent tracks its own last message timestamp
+                for agent_color, agent_info in self.registered_agents.items():
+                    logger.info(f"📬 MONITORING: Checking messages for {agent_color} agent (port {agent_info.get('opencode_port')})")
+                    
+                    if agent_color not in self.agent_configs:
+                        logger.warning(f"📬 MONITORING: {agent_color} not in agent_configs")
+                        continue
+                        
+                    # Get the Slack client for this agent's color
+                    if agent_color not in self.slack_clients:
+                        logger.warning(f"📬 MONITORING: {agent_color} not in slack_clients")
+                        continue
+                        
+                    client = self.slack_clients[agent_color]
+                    agent_config = self.agent_configs[agent_color]
+                    bot_user_id = agent_config.get("bot_user_id")
+                    
+                    # Use agent-specific last message timestamp
+                    agent_last_timestamp = agent_info.get("last_message_timestamp")
+                    
+                    logger.info(f"📬 MONITORING: {agent_color} last timestamp: {agent_last_timestamp}")
+                    
+                    try:
+                        messages = await client.get_messages(
+                            channel=self.default_channel,
+                            limit=10,
+                            since_timestamp=agent_last_timestamp
+                        )
+                        
+                        logger.info(f"📬 MONITORING: Found {len(messages)} new messages for {agent_color}")
+                        
+                        if messages:
+                            # Filter for messages relevant to this specific agent FIRST
+                            relevant_messages = filter_relevant_messages_for_agent(
+                                messages, agent_color, True, bot_user_id
+                            )
+                            
+                            logger.info(f"📬 MONITORING: Found {len(relevant_messages)} relevant messages for {agent_color}")
+                            
+                            # Send batch notification for relevant messages
+                            if relevant_messages:
+                                logger.info(f"📬 MONITORING: Sending batch notification for {len(relevant_messages)} messages")
+                                await self._notify_agent_batch(agent_color, agent_info["opencode_port"], relevant_messages)
+                            
+                            # Update timestamp ONLY AFTER processing - use latest timestamp from ALL messages
+                            latest_ts = max(float(msg.get("timestamp", 0)) for msg in messages)
+                            if not agent_last_timestamp or latest_ts > float(agent_last_timestamp or "0"):
+                                self.registered_agents[agent_color]["last_message_timestamp"] = f"{latest_ts:.6f}"
+                                logger.info(f"📬 MONITORING: Updated {agent_color} timestamp to {latest_ts:.6f}")
+                                
+                    except Exception as e:
+                        logger.error(f"Error monitoring messages for {agent_color}: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Error in message monitoring: {e}")
+                await asyncio.sleep(5)  # Wait before retrying
+    
+    async def _notify_agent(self, agent_color: str, opencode_port: int, message: Dict):
+        """Send notification to a specific agent's OpenCode instance using correct OpenCode API"""
+        try:
+            import aiohttp
+            
+            user_name = message.get("user_name", "Unknown")
+            message_text = message.get("text", "")
+            
+            logger.info(f"🔔 ATTEMPTING NOTIFICATION: Sending to {agent_color} agent on port {opencode_port}")
+            logger.info(f"🔔 MESSAGE FROM: {user_name}")
+            logger.info(f"🔔 MESSAGE TEXT: {message_text[:100]}...")
+            
+            # Clean message text to prevent CRLF issues
+            clean_message_text = message_text.replace('\r\n', '\n').replace('\r', '\n').strip()
+            
+            # Create a prompt message about the new Slack message - this will be visible to the AI agent
+            notification_prompt = f"🔔 SLACK NOTIFICATION: New message from {user_name}: \"{clean_message_text}\""
+            
+            async with aiohttp.ClientSession() as session:
+                # Method 1: Try appending text to prompt (works reliably)
+                append_url = f"http://127.0.0.1:{opencode_port}/tui/append-prompt"
+                append_payload = {"text": notification_prompt}
+                
+                logger.info(f"🔔 APPEND URL: {append_url}")
+                logger.info(f"🔔 APPEND PAYLOAD: {append_payload}")
+                
+                async with session.post(append_url, json=append_payload, headers={"Content-Type": "application/json"}) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ APPEND SUCCESS: {agent_color} agent on port {opencode_port}: notification text appended")
+                        
+                        # Method 2: Show toast notification (backup method that works reliably)
+                        toast_url = f"http://127.0.0.1:{opencode_port}/tui/show-toast"
+                        toast_payload = {
+                            "title": f"Slack Notification from {user_name}",
+                            "message": clean_message_text[:100],
+                            "variant": "info"
+                        }
+                        
+                        logger.info(f"🔔 TOAST URL: {toast_url}")
+                        logger.info(f"🔔 TOAST PAYLOAD: {toast_payload}")
+                        
+                        async with session.post(toast_url, json=toast_payload, headers={"Content-Type": "application/json"}) as response:
+                            if response.status == 200:
+                                logger.info(f"✅ TOAST SUCCESS: {agent_color} agent on port {opencode_port}: toast notification shown")
+                        logger.info(f"📬 NOTIFICATION DELIVERED: Message from {user_name} has been auto-submitted for immediate processing")
+                        return
+                    else:
+                        response_text = await response.text()
+                        logger.warning(f"⚠️ TUI SUBMIT FAILED: {agent_color} agent: HTTP {response.status} - {response_text}")
+                
+                # Method 2: Fallback to show-toast notification (non-intrusive)
+                toast_url = f"http://127.0.0.1:{opencode_port}/tui/show-toast"
+                toast_payload = {
+                    "title": f"Slack Message from {user_name}",
+                    "message": message_text[:100] + ("..." if len(message_text) > 100 else ""),
+                    "variant": "info"
+                }
+                
+                logger.info(f"🔔 FALLBACK: Trying toast notification")
+                logger.info(f"🔔 TOAST URL: {toast_url}")
+                logger.info(f"🔔 TOAST PAYLOAD: {toast_payload}")
+                
+                async with session.post(toast_url, json=toast_payload, headers={"Content-Type": "application/json"}) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ TOAST SUCCESS: {agent_color} agent on port {opencode_port}: toast shown for message from {user_name}")
+                    else:
+                        response_text = await response.text()
+                        logger.error(f"❌ TOAST FAILED: {agent_color} agent: HTTP {response.status} - {response_text}")
+                        
+        except Exception as e:
+            logger.error(f"💥 NOTIFICATION ERROR: Error notifying {agent_color} agent: {e}")
+            import traceback
+            logger.error(f"💥 NOTIFICATION TRACEBACK: {traceback.format_exc()}")
+    
+    async def _notify_agent_batch(self, agent_color: str, opencode_port: int, messages: List[Dict]):
+        """Send a single batch notification about multiple new messages"""
+        try:
+            import aiohttp
+            
+            message_count = len(messages)
+            if message_count == 0:
+                return
+                
+            logger.info(f"🔔 BATCH NOTIFICATION V{PUENTE_VERSION}: Sending summary of {message_count} messages to {agent_color} agent on port {opencode_port}")
+            
+            # Create simple notification prompt for append
+            if message_count == 1:
+                msg = messages[0]
+                user_name = msg.get("user_name", "Unknown")
+                notification_prompt = f"🔔 You have a new Slack message from {user_name}"
+            else:
+                # Get unique senders
+                senders = list(set(msg.get("user_name", "Unknown") for msg in messages))
+                if len(senders) == 1:
+                    sender_summary = f"from {senders[0]}"
+                elif len(senders) == 2:
+                    sender_summary = f"from {senders[0]} and {senders[1]}"
+                else:
+                    sender_summary = f"from {senders[0]} and {len(senders)-1} others"
+                
+                notification_prompt = f"🔔 You have {message_count} new Slack messages {sender_summary}"
+            
+            async with aiohttp.ClientSession() as session:
+                # Step 1: Append the message content to the prompt
+                append_url = f"http://127.0.0.1:{opencode_port}/tui/append-prompt"
+                append_payload = {"text": notification_prompt}
+                
+                logger.info(f"🔔 STEP 1 - APPEND URL: {append_url}")
+                logger.info(f"🔔 STEP 1 - APPEND PAYLOAD: {append_payload}")
+                
+                async with session.post(append_url, json=append_payload, headers={"Content-Type": "application/json"}) as response:
+                    if response.status == 200 and notification_prompt and notification_prompt.strip():
+                        logger.info(f"✅ STEP 1 SUCCESS: Message content appended to {agent_color} agent prompt")
+                        logger.info(f"✅ APPENDED CONTENT: {notification_prompt[:200]}...")
+                        
+                        # Step 2: Submit the prompt for processing (no additional text needed)
+                        submit_url = f"http://127.0.0.1:{opencode_port}/tui/submit-prompt"
+                        submit_payload = {}  # No text parameter - just submit what's in the prompt
+                        
+                        logger.info(f"🔔 STEP 2 - SUBMIT URL: {submit_url}")
+                        logger.info(f"🔔 STEP 2 - SUBMIT PAYLOAD: {submit_payload}")
+                        
+                        async with session.post(submit_url, json=submit_payload, headers={"Content-Type": "application/json"}) as submit_response:
+                            if submit_response.status == 200:
+                                logger.info(f"✅ STEP 2 SUCCESS: Prompt submitted for {agent_color} agent")
+                                logger.info(f"✅ BATCH NOTIFICATION SUCCESS: {agent_color} agent notified of {message_count} messages")
+                                return
+                            else:
+                                submit_response_text = await submit_response.text()
+                                logger.warning(f"⚠️ STEP 2 FAILED: Submit failed for {agent_color} agent: HTTP {submit_response.status} - {submit_response_text}")
+                    else:
+                        response_text = await response.text()
+                        logger.warning(f"⚠️ STEP 1 FAILED: Append failed for {agent_color} agent: HTTP {response.status} - {response_text}")
+                        logger.warning(f"⚠️ NOTIFICATION CONTENT: '{notification_prompt}'")
+                
+                # Fallback to toast
+                toast_url = f"http://127.0.0.1:{opencode_port}/tui/show-toast"
+                toast_payload = {
+                    "title": f"{message_count} New Slack Messages",
+                    "message": f"You have {message_count} new messages. Use get_relevant_messages to read them.",
+                    "variant": "info"
+                }
+                
+                async with session.post(toast_url, json=toast_payload, headers={"Content-Type": "application/json"}) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ BATCH TOAST SUCCESS: {agent_color} agent notified via toast of {message_count} messages")
+                    else:
+                        response_text = await response.text()
+                        logger.error(f"❌ BATCH TOAST FAILED: {agent_color} agent: HTTP {response.status} - {response_text}")
+                        
+        except Exception as e:
+            logger.error(f"💥 BATCH NOTIFICATION ERROR: Error sending batch notification to {agent_color} agent: {e}")
+            import traceback
+            logger.error(f"💥 BATCH NOTIFICATION TRACEBACK: {traceback.format_exc()}")
     
     def _register_handlers(self):
         """Register JSON-RPC method handlers with color-based agent support"""
@@ -1151,6 +1514,13 @@ class SlackDaemon:
             agent_config = self.agent_configs.get(color, {}) if color else {}
             bot_user_id = agent_config.get("bot_user_id")
             
+            # Use per-agent timestamp tracking if agent is registered
+            if color and color in self.registered_agents:
+                agent_since_timestamp = self.registered_agents[color].get("last_message_timestamp")
+                if agent_since_timestamp and not since_timestamp:
+                    since_timestamp = agent_since_timestamp
+                    logger.info(f"Using per-agent timestamp for {color}: {since_timestamp}")
+            
             # Get more messages than requested to have enough to filter from
             fetch_limit = min(limit * 3, 200)  # Fetch 3x requested, max 200
             
@@ -1165,6 +1535,9 @@ class SlackDaemon:
                 messages, agent_identifier, exclude_reacted, bot_user_id
             )
             
+            # NOTE: Don't update timestamp here - only monitoring loop should update it
+            # to avoid breaking auto-notifications
+            
             # Limit to requested amount
             relevant_messages = relevant_messages[:limit]
             
@@ -1175,7 +1548,8 @@ class SlackDaemon:
                 "total_filtered": len(relevant_messages),
                 "searched_total": len(messages),
                 "exclude_reacted": exclude_reacted,
-                "bot_user_id": bot_user_id
+                "bot_user_id": bot_user_id,
+                "since_timestamp": since_timestamp
             }
         
         async def upload_file(params: Dict) -> Dict:
@@ -1300,8 +1674,104 @@ class SlackDaemon:
                 "config_path": self.config_path,
                 "agents": list(self.slack_clients.keys()),
                 "agent_configs": {color: config.get("name", f"Agent-{color.title()}") 
-                                for color, config in self.agent_configs.items()}
+                                for color, config in self.agent_configs.items()},
+                "registered_agents": self.registered_agents
             }
+
+        async def register_agent(params: Dict) -> Dict:
+            """Register an agent for OpenCode notifications"""
+            try:
+                agent_color = params.get("agent_color")
+                opencode_port = params.get("opencode_port")
+                
+                if not agent_color:
+                    raise ValueError("agent_color parameter is required")
+                if not opencode_port:
+                    raise ValueError("opencode_port parameter is required")
+                
+                # Validate that this agent color exists in our configuration
+                if agent_color not in self.agent_configs:
+                    raise ValueError(f"Unknown agent color: {agent_color}. Available: {list(self.agent_configs.keys())}")
+                
+                # Initialize per-agent tracking
+                # Set initial timestamp to 5 seconds ago to catch immediate messages
+                initial_timestamp = time.time() - 5.0
+                self.registered_agents[agent_color] = {
+                    "opencode_port": int(opencode_port),
+                    "last_seen": time.time(),
+                    "last_message_timestamp": f"{initial_timestamp:.6f}"  # Format to 6 decimal places for Slack compatibility
+                }
+                
+                agent_name = self.get_agent_name_by_color(agent_color)
+                logger.info(f"🟢 AGENT REGISTRATION: {agent_name} (color: {agent_color}) registered on OpenCode port {opencode_port}")
+                logger.info(f"🟢 TIMESTAMP INIT: Set initial timestamp to {initial_timestamp} (5 seconds ago)")
+                logger.info(f"🟢 REGISTERED AGENTS COUNT: {len(self.registered_agents)}")
+                logger.info(f"🟢 ALL REGISTERED AGENTS: {list(self.registered_agents.keys())}")
+                
+                return {
+                    "success": True,
+                    "agent_color": agent_color,
+                    "agent_name": agent_name,
+                    "opencode_port": opencode_port,
+                    "message": f"Agent {agent_name} registered successfully"
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to register agent: {e}")
+                raise
+
+        async def unregister_agent(params: Dict) -> Dict:
+            """Unregister an agent from OpenCode notifications"""
+            try:
+                agent_color = params.get("agent_color")
+                
+                if not agent_color:
+                    raise ValueError("agent_color parameter is required")
+                
+                if agent_color in self.registered_agents:
+                    del self.registered_agents[agent_color]
+                    agent_name = self.get_agent_name_by_color(agent_color)
+                    logger.info(f"Unregistered {agent_name} (color: {agent_color})")
+                    
+                    return {
+                        "success": True,
+                        "agent_color": agent_color,
+                        "agent_name": agent_name,
+                        "message": f"Agent {agent_name} unregistered successfully"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "agent_color": agent_color,
+                        "message": f"Agent {agent_color} was not registered"
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Failed to unregister agent: {e}")
+                raise
+
+        async def list_agents(params: Dict) -> Dict:
+            """List all registered agents"""
+            try:
+                agents = {}
+                for color, info in self.registered_agents.items():
+                    agent_name = self.get_agent_name_by_color(color)
+                    agents[color] = {
+                        "name": agent_name,
+                        "opencode_port": info["opencode_port"],
+                        "last_seen": info["last_seen"],
+                        "last_message_timestamp": info["last_message_timestamp"]
+                    }
+                
+                return {
+                    "success": True,
+                    "registered_agents": agents,
+                    "total_count": len(agents)
+                }
+                
+            except Exception as e:
+                logger.error(f"Failed to list agents: {e}")
+                raise
         
         # Register all handlers with HTTP server
         if self.http_server:
@@ -1316,6 +1786,9 @@ class SlackDaemon:
             self.http_server.register_handler("slack.download_file", download_file)
             self.http_server.register_handler("slack.delete_file", delete_file)
             self.http_server.register_handler("daemon.health_check", health_check)
+            self.http_server.register_handler("daemon.register_agent", register_agent)
+            self.http_server.register_handler("daemon.unregister_agent", unregister_agent)
+            self.http_server.register_handler("daemon.list_agents", list_agents)
             logger.info(f"Registered {len(self.http_server.handlers)} HTTP handlers")
         else:
             raise RuntimeError("HTTP server is required but not initialized")

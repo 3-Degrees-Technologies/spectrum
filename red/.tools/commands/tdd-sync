@@ -1,0 +1,97 @@
+#!/bin/bash
+# tdd-sync command for Spectrum Development Framework
+# Synchronizes TDD state with actual development progress
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+SYNC="🔄"
+
+echo -e "${SYNC} ${BLUE}TDD STATE SYNC${NC}: Reconciling framework state with development progress"
+
+# Check if we're in a TDD cycle
+SPECTRUM_STATE_DIR=".spectrum/state"
+TDD_STATE_FILE="$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+
+if [[ ! -f "$TDD_STATE_FILE" ]]; then
+    echo -e "${ERROR} No active TDD cycle found"
+    echo -e "${INFO} Cannot sync without an existing TDD cycle"
+    exit 1
+fi
+
+# Load current state
+tdd_state=$(cat "$TDD_STATE_FILE")
+current_phase=$(echo "$tdd_state" | jq -r '.phase')
+test_description=$(echo "$tdd_state" | jq -r '.test_description')
+cycle_number=$(echo "$tdd_state" | jq -r '.cycle_number')
+
+echo -e "${INFO} Current TDD state:"
+echo "  Cycle: #$cycle_number"
+echo "  Phase: $current_phase"
+echo "  Test: $test_description"
+echo ""
+
+# Run tests to determine actual state
+echo -e "${WORKING} Analyzing actual development state..."
+
+# Check if tests pass
+if dotnet test --no-build --verbosity minimal >/dev/null 2>&1; then
+    echo -e "${SUCCESS} Tests are passing - GREEN phase achieved"
+    
+    if [[ "$current_phase" == "red" || "$current_phase" == "red-confirmed" ]]; then
+        echo -e "${INFO} Updating state from $current_phase to green-confirmed"
+        jq '.phase = "green-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate | .green_completed = now | .green_completed |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+        mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
+        echo -e "${SUCCESS} State synchronized to green-confirmed"
+    elif [[ "$current_phase" == "green" ]]; then
+        echo -e "${INFO} Updating state from green to green-confirmed"
+        jq '.phase = "green-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+        mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
+        echo -e "${SUCCESS} State synchronized to green-confirmed"
+    else
+        echo -e "${INFO} State already at $current_phase - no sync needed"
+    fi
+else
+    echo -e "${ERROR} Tests are failing"
+    
+    if [[ "$current_phase" == "green" || "$current_phase" == "green-confirmed" || "$current_phase" == "refactor-completed" ]]; then
+        echo -e "${INFO} Reverting state from $current_phase to red-confirmed"
+        jq '.phase = "red-confirmed" | .confirmed = true | .confirmed_at = now | .confirmed_at |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+        mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
+        echo -e "${SUCCESS} State synchronized to red-confirmed"
+    else
+        echo -e "${INFO} State already indicates failing tests - no sync needed"
+    fi
+fi
+
+# Show next steps
+echo ""
+echo -e "${INFO} ${BLUE}Next steps based on synchronized state:${NC}"
+updated_state=$(cat "$TDD_STATE_FILE")
+updated_phase=$(echo "$updated_state" | jq -r '.phase')
+
+case "$updated_phase" in
+    "red-confirmed")
+        echo -e "${INFO} Run: ./.tools/spectrum-dev tdd-green"
+        echo "  Implement code to make the failing test pass"
+        ;;
+    "green-confirmed")
+        echo -e "${INFO} Options:"
+        echo "  - Run: ./.tools/spectrum-dev tdd-commit 'message' (commit current work)"
+        echo "  - Run: ./.tools/spectrum-dev tdd-refactor (optional refactoring first)"
+        ;;
+    "refactor-completed")
+        echo -e "${INFO} Run: ./.tools/spectrum-dev tdd-commit 'message'"
+        echo "  Commit the completed TDD cycle"
+        ;;
+esac
+
+echo ""
+echo -e "${SUCCESS} ${BLUE}TDD STATE SYNC COMPLETE${NC}"

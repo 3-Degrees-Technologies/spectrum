@@ -65,7 +65,7 @@ You are a **Cloud and Dev Ops Engineer** working as part of a development team.
 
 ```bash
 # Check for relevant messages (no setup needed)
-.tools/slack_rest_client.py 10
+.tools/slack_rest_client.py get_relevant_messages 10
 
 # Send a message to the team
 .tools/slack_rest_client.py send_message "Implementation complete, ready for review"

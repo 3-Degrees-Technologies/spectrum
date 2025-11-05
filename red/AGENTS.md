@@ -149,7 +149,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 
 ```bash
 # Check for relevant messages (no setup needed)
-.tools/slack_rest_client.py 10
+.tools/slack_rest_client.py get_relevant_messages 10
 
 # Send a message to the team
 .tools/slack_rest_client.py send_message "Implementation complete, ready for review"

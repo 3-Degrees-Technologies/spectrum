@@ -1,0 +1,447 @@
+#!/bin/bash
+# api-review command for Spectrum Development Framework
+# Implements: API Code Quality Checklist - Deadly Sins Detection
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+SKULL="💀"
+VIRTUE="🌟"
+API="🔌"
+
+echo -e "${API} ${BLUE}API REVIEW${NC}: Checking for API Code Quality Deadly Sins"
+
+# Check if we're in a Centro project
+if [[ ! -f "Centro.sln" ]]; then
+    echo -e "${ERROR} Not in Centro project root"
+    echo -e "${INFO} Run this command from the Centro solution directory"
+    exit 1
+fi
+
+# Initialize counters
+deadly_sins_found=0
+virtues_found=0
+total_files_checked=0
+
+# Create temporary file for detailed results
+results_file=$(mktemp)
+echo "# API Review Results - $(date)" > "$results_file"
+echo "" >> "$results_file"
+
+# Function to check for deadly sin #1: Hardcoded Environment Dependencies
+check_hardcoded_dependencies() {
+    local file="$1"
+    local line_num="$2"
+    local line_content="$3"
+    
+    # Check for localhost patterns
+    if echo "$line_content" | grep -qE "(localhost|127\.0\.0\.1|::1)" && \
+       echo "$line_content" | grep -vE "(//|#|/\*|\*)" && \
+       echo "$line_content" | grep -qE "(Host=|Server=|http://|https://|tcp://|\b5432\b|\b8080\b|\b3000\b)"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #1${NC}: Hardcoded localhost in $file:$line_num"
+        echo "    ${YELLOW}→${NC} $line_content"
+        echo "    ${INFO} Fix: Use configuration instead of hardcoded localhost"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #1: Hardcoded Environment Dependencies**" >> "$results_file"
+        echo "   - File: \`$file:$line_num\`" >> "$results_file"
+        echo "   - Content: \`$line_content\`" >> "$results_file"
+        echo "   - Fix: Use configuration instead of hardcoded localhost" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for hardcoded ports
+    if echo "$line_content" | grep -qE ":[0-9]{4,5}" && \
+       echo "$line_content" | grep -vE "(//|#|/\*|\*)" && \
+       echo "$line_content" | grep -qE "(Host=|Server=|http://|https://|tcp://)"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #1${NC}: Hardcoded port in $file:$line_num"
+        echo "    ${YELLOW}→${NC} $line_content"
+        echo "    ${INFO} Fix: Use configuration for port numbers"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #1: Hardcoded Environment Dependencies**" >> "$results_file"
+        echo "   - File: \`$file:$line_num\`" >> "$results_file"
+        echo "   - Content: \`$line_content\`" >> "$results_file"
+        echo "   - Fix: Use configuration for port numbers" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for hardcoded file paths
+    if echo "$line_content" | grep -qE "(C:\\\\|/var/|/tmp/|/home/)" && \
+       echo "$line_content" | grep -vE "(//|#|/\*|\*)" && \
+       echo "$line_content" | grep -qE "(\"|')"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #1${NC}: Hardcoded file path in $file:$line_num"
+        echo "    ${YELLOW}→${NC} $line_content"
+        echo "    ${INFO} Fix: Use configuration for file paths"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #1: Hardcoded Environment Dependencies**" >> "$results_file"
+        echo "   - File: \`$file:$line_num\`" >> "$results_file"
+        echo "   - Content: \`$line_content\`" >> "$results_file"
+        echo "   - Fix: Use configuration for file paths" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for deadly sin #2: Missing Error Handling
+check_error_handling() {
+    local file="$1"
+    local content="$2"
+    
+    # Check for database operations without try-catch
+    if echo "$content" | grep -qE "(await.*\.(FindAsync|FirstOrDefaultAsync|ToListAsync|SaveChangesAsync))" && \
+       ! echo "$content" | grep -qE "(try\s*{|catch\s*\()" ; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #2${NC}: Database operation without error handling in $file"
+        echo "    ${INFO} Fix: Wrap database operations in try-catch blocks"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #2: Missing Error Handling**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Database operations without try-catch" >> "$results_file"
+        echo "   - Fix: Wrap database operations in try-catch blocks" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for HTTP requests without error handling
+    if echo "$content" | grep -qE "(HttpClient|httpClient)\." && \
+       ! echo "$content" | grep -qE "(try\s*{|catch\s*\()" ; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #2${NC}: HTTP request without error handling in $file"
+        echo "    ${INFO} Fix: Wrap HTTP operations in try-catch blocks"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #2: Missing Error Handling**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: HTTP requests without try-catch" >> "$results_file"
+        echo "   - Fix: Wrap HTTP operations in try-catch blocks" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for deadly sin #3: Fat Controllers
+check_fat_controllers() {
+    local file="$1"
+    local content="$2"
+    
+    # Skip if not a controller
+    if ! echo "$file" | grep -qE "Controller\.cs$"; then
+        return 0
+    fi
+    
+    # Check for database context usage in controllers
+    if echo "$content" | grep -qE "_dbContext\.|_context\." && \
+       echo "$content" | grep -qE "\[Http(Get|Post|Put|Delete)\]"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #3${NC}: Database access in controller $file"
+        echo "    ${INFO} Fix: Move database access to service layer"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #3: Fat Controllers**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Direct database access in controller" >> "$results_file"
+        echo "   - Fix: Move database access to service layer" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for business logic calculations in controllers
+    if echo "$content" | grep -qE "\.Sum\(|\.Count\(|\.Average\(|\.Max\(|\.Min\(" && \
+       echo "$content" | grep -qE "\[Http(Get|Post|Put|Delete)\]"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #3${NC}: Business logic in controller $file"
+        echo "    ${INFO} Fix: Move calculations to service layer"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #3: Fat Controllers**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Business logic calculations in controller" >> "$results_file"
+        echo "   - Fix: Move calculations to service layer" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for deadly sin #4: Inconsistent HTTP Usage
+check_http_usage() {
+    local file="$1"
+    local content="$2"
+    
+    # Skip if not a controller
+    if ! echo "$file" | grep -qE "Controller\.cs$"; then
+        return 0
+    fi
+    
+    # Check for POST used for read operations
+    if echo "$content" | grep -qE "\[HttpPost.*\]" && \
+       echo "$content" | grep -qE "(Get|Search|Find|Retrieve)" && \
+       ! echo "$content" | grep -qE "(Create|Add|Insert|Update)"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #4${NC}: POST used for read operation in $file"
+        echo "    ${INFO} Fix: Use GET for read operations"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #4: Inconsistent HTTP Usage**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: POST used for read operation" >> "$results_file"
+        echo "   - Fix: Use GET for read operations" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for OK returned with error messages (improved to avoid false positives)
+    if echo "$content" | grep -qE "return Ok\(.*\{.*[\"']?error[\"']?.*\}"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #4${NC}: OK status with error message in $file"
+        echo "    ${INFO} Fix: Use appropriate error status codes"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #4: Inconsistent HTTP Usage**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: OK status with error message" >> "$results_file"
+        echo "   - Fix: Use appropriate error status codes" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for deadly sin #5: Missing Input Validation
+check_input_validation() {
+    local file="$1"
+    local content="$2"
+    
+    # Skip if not a controller
+    if ! echo "$file" | grep -qE "Controller\.cs$"; then
+        return 0
+    fi
+    
+    # Check for missing ModelState validation
+    if echo "$content" | grep -qE "\[HttpPost\]|\[HttpPut\]" && \
+       ! echo "$content" | grep -qE "ModelState\.IsValid"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #5${NC}: Missing input validation in $file"
+        echo "    ${INFO} Fix: Add ModelState.IsValid checks"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #5: Missing Input Validation**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Missing ModelState validation" >> "$results_file"
+        echo "   - Fix: Add ModelState.IsValid checks" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for missing validation attributes on models
+    if echo "$file" | grep -qE "(Request|Model)\.cs$" && \
+       echo "$content" | grep -qE "public.*string.*\{ get; set; \}" && \
+       ! echo "$content" | grep -qE "\[Required\]|\[StringLength\]|\[EmailAddress\]|\[Range\]"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #5${NC}: Missing validation attributes in $file"
+        echo "    ${INFO} Fix: Add validation attributes to model properties"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #5: Missing Input Validation**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Missing validation attributes on model properties" >> "$results_file"
+        echo "   - Fix: Add validation attributes to model properties" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for deadly sin #6: Exposed Internal Implementation
+check_exposed_internals() {
+    local file="$1"
+    local content="$2"
+    
+    # Skip if not a controller
+    if ! echo "$file" | grep -qE "Controller\.cs$"; then
+        return 0
+    fi
+    
+    # Check for database entities returned directly
+    if echo "$content" | grep -qE "return.*await _dbContext\." && \
+       ! echo "$content" | grep -qE "\.Map\(|\.ToDto\(|\.ToResponse\("; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #6${NC}: Raw database entity returned in $file"
+        echo "    ${INFO} Fix: Use dedicated response models, not database entities"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #6: Exposed Internal Implementation**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Raw database entity returned from API" >> "$results_file"
+        echo "   - Fix: Use dedicated response models, not database entities" >> "$results_file"
+        return 1
+    fi
+    
+    # Check for exception details in API responses (exclude internal logging)
+    if echo "$content" | grep -qE "return.*\(.*ex\.(Message|StackTrace|ToString)" && \
+       ! echo "$content" | grep -qE "_logger\.Log.*ex\.(Message|StackTrace|ToString)"; then
+        echo -e "  ${SKULL} ${RED}DEADLY SIN #6${NC}: Exception details exposed in $file"
+        echo "    ${INFO} Fix: Return generic error messages, log details internally"
+        echo "" >> "$results_file"
+        echo "❌ **DEADLY SIN #6: Exposed Internal Implementation**" >> "$results_file"
+        echo "   - File: \`$file\`" >> "$results_file"
+        echo "   - Issue: Exception details exposed in API response" >> "$results_file"
+        echo "   - Fix: Return generic error messages, log details internally" >> "$results_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to check for virtues
+check_virtues() {
+    local file="$1"
+    local content="$2"
+    
+    local virtues_in_file=0
+    
+    # Virtue 1: Configuration usage
+    if echo "$content" | grep -qE "_configuration\[|GetConnectionString|IConfiguration"; then
+        ((virtues_in_file++))
+    fi
+    
+    # Virtue 2: Proper error handling
+    if echo "$content" | grep -qE "try\s*{.*catch\s*\(" && \
+       echo "$content" | grep -qE "_logger\.Log"; then
+        ((virtues_in_file++))
+    fi
+    
+    # Virtue 3: Service layer usage
+    if echo "$file" | grep -qE "Controller\.cs$" && \
+       echo "$content" | grep -qE "_.*Service\." && \
+       ! echo "$content" | grep -qE "_dbContext\."; then
+        ((virtues_in_file++))
+    fi
+    
+    # Virtue 4: Input validation
+    if echo "$content" | grep -qE "ModelState\.IsValid" && \
+       echo "$content" | grep -qE "\[Required\]|\[StringLength\]"; then
+        ((virtues_in_file++))
+    fi
+    
+    # Virtue 5: Proper HTTP usage
+    if echo "$content" | grep -qE "\[HttpGet\].*Get|\[HttpPost\].*Create|\[HttpPut\].*Update|\[HttpDelete\].*Delete"; then
+        ((virtues_in_file++))
+    fi
+    
+    # Virtue 6: Response models
+    if echo "$content" | grep -qE "(Response|Dto|ViewModel)\.cs$|\.Map\(|\.ToDto\("; then
+        ((virtues_in_file++))
+    fi
+    
+    return $virtues_in_file
+}
+
+echo -e "\n${WORKING} Analyzing API files for deadly sins and virtues..."
+
+# Find all relevant API files (controllers, services, models)
+api_files=$(find src/ -name "*.cs" | grep -E "(Controller|Service|Request|Response|Model)" | grep -v ".Tests" | head -50)
+
+if [[ -z "$api_files" ]]; then
+    echo -e "${WARNING} No API files found to analyze"
+    echo -e "${INFO} Looking for files matching: *Controller.cs, *Service.cs, *Request.cs, *Response.cs, *Model.cs"
+    exit 0
+fi
+
+echo -e "${INFO} Found $(echo "$api_files" | wc -l) API files to analyze"
+echo ""
+
+# Process each file
+while IFS= read -r file; do
+    if [[ -f "$file" ]]; then
+        ((total_files_checked++))
+        echo -e "${WORKING} Checking: ${BLUE}$file${NC}"
+        
+        # Read file content
+        content=$(cat "$file")
+        
+        # Check each line for hardcoded dependencies
+        line_num=1
+        while IFS= read -r line; do
+            if ! check_hardcoded_dependencies "$file" "$line_num" "$line"; then
+                ((deadly_sins_found++))
+            fi
+            ((line_num++))
+        done < "$file"
+        
+        # Check file-level patterns
+        file_sins=0
+        
+        if ! check_error_handling "$file" "$content"; then
+            ((file_sins++))
+        fi
+        
+        if ! check_fat_controllers "$file" "$content"; then
+            ((file_sins++))
+        fi
+        
+        if ! check_http_usage "$file" "$content"; then
+            ((file_sins++))
+        fi
+        
+        if ! check_input_validation "$file" "$content"; then
+            ((file_sins++))
+        fi
+        
+        if ! check_exposed_internals "$file" "$content"; then
+            ((file_sins++))
+        fi
+        
+        ((deadly_sins_found += file_sins))
+        
+        # Check for virtues
+        check_virtues "$file" "$content"
+        file_virtues=$?
+        ((virtues_found += file_virtues))
+        
+        if [[ $file_virtues -gt 0 ]]; then
+            echo -e "  ${VIRTUE} ${GREEN}$file_virtues virtues found${NC}"
+        fi
+        
+        if [[ $file_sins -eq 0 ]]; then
+            echo -e "  ${SUCCESS} No deadly sins in this file"
+        fi
+        
+        echo ""
+    fi
+done <<< "$api_files"
+
+# Generate summary
+echo "" >> "$results_file"
+echo "## Summary" >> "$results_file"
+echo "- Files checked: $total_files_checked" >> "$results_file"
+echo "- Deadly sins found: $deadly_sins_found" >> "$results_file"
+echo "- Virtues found: $virtues_found" >> "$results_file"
+echo "- Quality score: $(( (virtues_found * 100) / (virtues_found + deadly_sins_found + 1) ))%" >> "$results_file"
+
+echo -e "${INFO} ${BLUE}API REVIEW SUMMARY${NC}"
+echo "────────────────────────────────"
+echo -e "📁 Files checked: ${BLUE}$total_files_checked${NC}"
+echo -e "💀 Deadly sins found: ${RED}$deadly_sins_found${NC}"
+echo -e "🌟 Virtues found: ${GREEN}$virtues_found${NC}"
+
+if [[ $deadly_sins_found -eq 0 ]]; then
+    echo ""
+    echo -e "${SUCCESS} ${GREEN}NO DEADLY SINS FOUND${NC}"
+    echo -e "${VIRTUE} Your API follows Centro quality standards!"
+    echo ""
+    echo -e "${INFO} Review complete - proceeding to quality gates"
+    rm -f "$results_file"
+    exit 0
+else
+    quality_score=$(( (virtues_found * 100) / (virtues_found + deadly_sins_found + 1) ))
+    echo -e "📊 Quality score: ${YELLOW}$quality_score%${NC}"
+    echo ""
+    echo -e "${ERROR} ${RED}DEADLY SINS DETECTED - BLOCKING PR CREATION${NC}"
+    echo ""
+    echo -e "${SKULL} ${YELLOW}You must fix these issues before proceeding to pr-ready:${NC}"
+    echo ""
+    echo -e "${INFO} ${BLUE}Quick fixes reference:${NC}"
+    echo "  • Hardcoded values → Use _configuration[] or connection strings"
+    echo "  • Missing try-catch → Wrap external calls in error handling" 
+    echo "  • Fat controllers → Move logic to service classes"
+    echo "  • Wrong HTTP methods → GET for reads, POST for creates"
+    echo "  • Missing validation → Add [Required], ModelState.IsValid checks"
+    echo "  • Raw entities → Use dedicated response models"
+    echo ""
+    echo -e "${INFO} Detailed results saved to: ${BLUE}$results_file${NC}"
+    echo -e "${INFO} Review the API_CODE_QUALITY_CHECKLIST.md for detailed guidance"
+    echo ""
+    echo -e "${WARNING} ${YELLOW}After fixing deadly sins, run this command again to verify${NC}"
+    echo ""
+    exit 1
+fi

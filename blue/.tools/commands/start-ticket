@@ -4,9 +4,14 @@
 # Purpose: Read ticket info from discover-ticket, set up workspace, begin focused implementation
 
 # Configuration
-# Use project-local tmp directory
-SPECTRUM_TMP_DIR=".tmp"
-TICKET_INFO_FILE="$SPECTRUM_TMP_DIR/spectrum-ticket-info.json"
+# Use unified Spectrum state directory structure  
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+TICKET_INFO_FILE="$SPECTRUM_STATE_DIR/discovery-cache.json"
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR" ".spectrum/archive/completed-tickets"
 
 # Colors and emoji
 RED='\033[0;31m'
@@ -72,15 +77,69 @@ fi
 echo -e "${SUCCESS} Ready to proceed with ticket: ${BLUE}$ticket_id${NC} - $ticket_title"
 echo -e "${SUCCESS} Using ticket file: $downloaded_file ($(wc -l < "$downloaded_file") lines)"
 
+# AI Agent Clarification Checkpoint
+echo -e "\n${INFO} ${YELLOW}AI Agent Clarification Checkpoint${NC}"
+echo -e "${INFO} Before proceeding with implementation setup, please:"
+echo -e "${INFO} 1. Review the complete ticket requirements in: $downloaded_file"
+echo -e "${INFO} 2. Ask any clarifying questions about requirements, scope, or approach"
+echo -e "${INFO} 3. Ask Agent-Black for any database questions or clarifications you might have"
+echo -e "${INFO} 4. Confirm understanding of the implementation goals"
+echo -e "${INFO} 5. Then continue with the setup process"
+echo ""
+echo -e "${INFO} ${BLUE}This is your opportunity to gather clarity before starting work.${NC}"
+echo ""
+
 # Domain detection function for AI agents - no interactive prompts
 detect_domain() {
     local ticket_file="$1"
-    local ticket_content=$(cat "$ticket_file" | tr '[:upper:]' '[:lower:]')
+    local ticket_content=$(cat "$ticket_file")
+    local ticket_content_lower=$(echo "$ticket_content" | tr '[:upper:]' '[:lower:]')
     
-    # Check ticket content for domain keywords
-    if echo "$ticket_content" | grep -q -E "(bruno|api test|integration test|test groups|test reorganization|test consolidation)"; then
+    # First priority: Extract namespaces from ticket content
+    # Look for patterns like "Centro.Providers.Wise.AccountMapping", "Centro.Core.Beneficiaries", etc.
+    if namespace=$(echo "$ticket_content" | grep -oE "Centro\.[A-Za-z]+(\.[A-Za-z]+)*" | head -1) && [[ -n "$namespace" ]]; then
+        # Convert namespace to folder path: Centro.Providers.Wise.AccountMapping -> src/Centro.Providers/Wise/AccountMapping
+        assembly_name=$(echo "$namespace" | cut -d. -f1-2)  # Centro.Providers
+        sub_namespace=$(echo "$namespace" | cut -d. -f3-)    # Wise.AccountMapping
+        
+        if [[ "$sub_namespace" != "$namespace" && -n "$sub_namespace" ]]; then
+            # Multi-level namespace: src/AssemblyName/SubNamespace
+            sub_path=$(echo "$sub_namespace" | sed 's/\./\//g')  # Wise/AccountMapping -> Wise/AccountMapping
+            folder_path="src/$assembly_name/$sub_path"
+        else
+            # Two-level namespace: src/AssemblyName
+            folder_path="src/$assembly_name"
+        fi
+        
+        # Check if exact path exists
+        if [[ -d "$folder_path" ]]; then
+            echo "$folder_path"
+            return 0
+        fi
+        
+        # Try parent folders if specific path doesn't exist
+        # e.g., src/Centro.Providers/Wise/AccountMapping -> src/Centro.Providers/Wise -> src/Centro.Providers
+        parent_path="$folder_path"
+        while [[ "$parent_path" != "src" && "$parent_path" != "." ]]; do
+            parent_path=$(dirname "$parent_path")
+            if [[ -d "$parent_path" && "$parent_path" != "src" ]]; then
+                echo "$parent_path"
+                return 0
+            fi
+        done
+    fi
+    
+    # Second priority: Check ticket content for domain keywords
+    # Bruno domain: Specific testing keywords (not just "api")
+    if echo "$ticket_content_lower" | grep -q -E "(bruno|api test|integration test|test groups|test reorganization|test consolidation|bruno test)"; then
         if [[ -d "bruno" ]]; then
             echo "bruno"
+            return 0
+        fi
+    # Centro.Api domain: API development, controllers, services, endpoints, namespace
+    elif echo "$ticket_content_lower" | grep -q -E "(api|controller|endpoint|service|centro\.api|beneficiary|currency|country|payout method)"; then
+        if [[ -d "src/Centro.Api" ]]; then
+            echo "src/Centro.Api"
             return 0
         fi
     elif echo "$ticket_content" | grep -q -E "(lambda|aws lambda|projection|event sourcing)"; then
@@ -101,11 +160,6 @@ detect_domain() {
     elif echo "$ticket_content" | grep -q -E "(payout|payment|transfer)"; then
         if [[ -d "src/Centro.Core/Payout" ]]; then
             echo "src/Centro.Core/Payout"
-            return 0
-        fi
-    elif echo "$ticket_content" | grep -q -E "(api|controller|endpoint)"; then
-        if [[ -d "src/Centro.Api" ]]; then
-            echo "src/Centro.Api"
             return 0
         fi
     elif echo "$ticket_content" | grep -q -E "(infrastructure|aws|deployment)"; then
@@ -168,6 +222,41 @@ fi
 # Ensure domain exists
 ensure_domain_exists "$domain_folder"
 
+# Search for README.md files in the detected domain
+echo -e "\n${INFO} ${YELLOW}Searching for README.md files in domain for context...${NC}"
+readme_files=()
+if [[ -f "$domain_folder/README.md" ]]; then
+    readme_files+=("$domain_folder/README.md")
+fi
+
+# Search subdirectories of the domain (up to 2 levels deep)
+while IFS= read -r -d '' readme_file; do
+    readme_files+=("$readme_file")
+done < <(find "$domain_folder" -maxdepth 2 -name "README.md" -type f -print0 2>/dev/null)
+
+if [[ ${#readme_files[@]} -gt 0 ]]; then
+    echo -e "${SUCCESS} Found README.md files for domain context:"
+    for readme in "${readme_files[@]}"; do
+        line_count=$(wc -l < "$readme" 2>/dev/null || echo "0")
+        echo -e "${INFO}   📄 $readme ($line_count lines)"
+    done
+    echo ""
+    echo -e "${INFO} ${BLUE}AI AGENT RECOMMENDATION:${NC}"
+    echo -e "${INFO} Review these README files before implementing:"
+    for readme in "${readme_files[@]}"; do
+        echo -e "${INFO} - Read: $readme"
+    done
+    echo -e "${INFO} These files contain:"
+    echo -e "${INFO}   • Existing architecture patterns"
+    echo -e "${INFO}   • Domain-specific conventions"
+    echo -e "${INFO}   • Integration guidelines"
+    echo -e "${INFO}   • Referenced design documents"
+    echo ""
+else
+    echo -e "${YELLOW} No README.md files found in domain: $domain_folder"
+    echo -e "${INFO} Consider creating documentation as you implement"
+fi
+
 # Step 2: Copy ticket to domain folder
 echo -e "\n${FOLDER} Step 2: Creating ticket documentation..."
 
@@ -212,6 +301,43 @@ if [[ "$current_branch" != "$target_branch" ]]; then
     }
 fi
 
+# Handle any unstaged changes from previous ticket (common: ticket archives)
+if [[ -n $(git status --porcelain) ]]; then
+    echo -e "${WORKING} Found unstaged changes (likely ticket archives from previous work)"
+    echo -e "${WORKING} Stashing changes to allow clean pull..."
+    
+    # Stash with error handling for permission issues
+    stash_output=$(git stash push -u -m "Auto-stash from start-ticket: $(date -Iseconds)" 2>&1)
+    stash_exit_code=$?
+    
+    # Check if stash succeeded despite warnings
+    if [[ $stash_exit_code -eq 0 ]] || git status --porcelain | wc -l | grep -q "^0$"; then
+        STASHED_CHANGES=true
+        echo -e "${SUCCESS} Changes stashed successfully"
+        # Show warnings but don't fail
+        if echo "$stash_output" | grep -q "warning:"; then
+            echo -e "${YELLOW} Note: Some directories couldn't be removed due to permissions (this is normal)"
+        fi
+    else
+        echo -e "${ERROR} ${RED}FATAL ERROR: Failed to stash changes${NC}"
+        echo "$stash_output"
+        echo ""
+        echo -e "${ERROR} ${RED}WORKSPACE CONTAMINATED - TICKET WORKFLOW INVALID${NC}"
+        echo -e "${INFO} ${RED}ALL WORK ON THIS TICKET MUST STOP IMMEDIATELY${NC}"
+        echo ""
+        echo -e "${INFO} Required actions before proceeding:"
+        echo -e "${INFO} 1. Fix permission issues on directories that failed to stash"
+        echo -e "${INFO} 2. Manually resolve git workspace conflicts"
+        echo -e "${INFO} 3. Re-run start-ticket until it succeeds 100%"
+        echo -e "${INFO} 4. NEVER work on a ticket without successful start-ticket completion"
+        echo ""
+        echo -e "${ERROR} ${RED}NO CODING, COMMITS, OR PR WORK ALLOWED UNTIL THIS IS RESOLVED${NC}"
+        exit 1
+    fi
+else
+    STASHED_CHANGES=false
+fi
+
 # Pull latest from dev branch to ensure we have the most recent changes
 echo -e "${WORKING} Pulling latest changes from origin/$target_branch..."
 git pull origin "$target_branch" || {
@@ -230,26 +356,51 @@ git checkout -b "$branch_name" || {
 
 echo -e "${SUCCESS} Created and switched to feature branch: $branch_name (based on latest $target_branch)"
 
+# Restore stashed changes if any were stashed
+if [[ "$STASHED_CHANGES" == "true" ]]; then
+    echo -e "${WORKING} Restoring stashed changes to new feature branch..."
+    git stash pop || {
+        echo -e "${ERROR} Failed to restore stashed changes"
+        echo -e "${INFO} Changes are still in stash - you can manually restore with: git stash pop"
+        echo -e "${INFO} Continuing with ticket setup..."
+    }
+    echo -e "${SUCCESS} Previous work restored to feature branch"
+fi
+
 # Step 4: Save workflow state
 echo -e "\n${SAVE} Step 4: Saving workflow state..."
 
-mkdir -p .tmp
-cat > .tmp/current-ticket.json << EOF
+# Create unified state structure
+cat > "$CURRENT_TICKET_FILE" << EOF
 {
-  "ticket": "$ticket_id",
+  "ticket_id": "$ticket_id",
   "title": "$ticket_title",
+  "description": "$(head -n 5 "$downloaded_file" | tail -n 1 | sed 's/"/\\"/g')",
+  "status": "in_progress",
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "branch": "$branch_name",
   "domain": "$domain",
-  "base_path": "$base_path",
   "domain_folder": "$domain_folder",
   "ticket_doc_path": "$ticket_doc_path",
-  "branch": "$branch_name",
-  "phase": "started",
-  "created": "$(date -Iseconds)",
-  "source_file": "$downloaded_file"
+  "ticket_original_path": "$downloaded_file",
+  "pr_url": null,
+  "tdd_cycles": [],
+  "files_modified": [],
+  "commit_history": []
 }
 EOF
 
-echo -e "${SUCCESS} Workflow state saved to .tmp/current-ticket.json"
+# Create clean TDD cycle state
+cat > "$SPECTRUM_STATE_DIR/current-tdd-cycle.json" << EOF
+{
+  "cycle_number": 0,
+  "phase": "ready",
+  "ticket": "$ticket_id"
+}
+EOF
+
+echo -e "${SUCCESS} Workflow state saved to $CURRENT_TICKET_FILE"
+echo -e "${SUCCESS} TDD cycle state initialized"
 
 # Summary and next steps
 echo -e "\n${SUCCESS} Ticket workflow initialized successfully!"
@@ -266,7 +417,30 @@ echo "  2. Begin implementation work based on ticket requirements"
 echo "  3. Use TDD approach if applicable: write tests first, then implementation"
 echo "  4. Commit work regularly and push feature branch when ready"
 
-# Clean up discovered temp files unconditionally - they've been copied to domain folder
-echo -e "${INFO} Cleaning up temporary discovery files..."
-rm -f "$downloaded_file"
+# Preserve ticket file throughout workflow - it will be moved to final location by pr-ready
+echo -e "${INFO} Preserving ticket file for workflow..."
+echo -e "${SUCCESS} Original ticket preserved at: $downloaded_file"
+echo -e "${INFO} This will be moved to the correct code location during pr-ready"
+
+# Step 5: Create initial commit with ticket documentation
+echo -e "\n${SAVE} Step 5: Creating initial commit with ticket documentation..."
+
+# Add the ticket file to git
+git add "$ticket_doc_path"
+
+# Create initial commit
+commit_message="$ticket_id: Initialize ticket with documentation
+
+- Add ticket documentation to $domain_folder
+- Set up feature branch for implementation
+- Ready for development work"
+
+git commit -m "$commit_message" || {
+    echo -e "${ERROR} Failed to create initial commit"
+    exit 1
+}
+
+echo -e "${SUCCESS} Initial commit created with ticket documentation"
+
+# Only clean up the discovery cache, keep the ticket file
 rm -f "$TICKET_INFO_FILE"

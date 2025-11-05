@@ -18,15 +18,52 @@ PR="🔀"
 echo -e "${PR} ${BLUE}PR READY${NC}: Automated quality validation and Pull Request creation"
 
 # Check if we're in a ticket workflow
-if [[ ! -f ".tmp/current-ticket.json" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR"
+
+if [[ ! -f "$CURRENT_TICKET_FILE" ]]; then
     echo -e "${ERROR} No active ticket workflow found"
     echo -e "${INFO} Please run './.tools/commands/start-ticket' first"
     exit 1
 fi
 
+# CRITICAL: Validate that start-ticket completed successfully
+if ! jq -e '.status == "in_progress" and .started_at != null and .branch != null' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+    echo -e "${ERROR} ${RED}FATAL: Invalid ticket workflow state${NC}"
+    echo -e "${INFO} ${RED}start-ticket command did not complete successfully${NC}"
+    echo ""
+    echo -e "${ERROR} Current ticket state issues detected:"
+    
+    # Check specific failure conditions
+    if ! jq -e '.status' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+        echo -e "${INFO} - Missing or invalid ticket status"
+    fi
+    if ! jq -e '.started_at' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+        echo -e "${INFO} - Missing ticket start timestamp (workspace setup failed)"
+    fi
+    if ! jq -e '.branch' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+        echo -e "${INFO} - Missing branch information (git workflow failed)"
+    fi
+    
+    echo ""
+    echo -e "${ERROR} ${RED}ALL WORK ON THIS TICKET IS INVALID${NC}"
+    echo -e "${INFO} Required actions:"
+    echo -e "${INFO} 1. Delete any existing commits/changes from failed workflow"
+    echo -e "${INFO} 2. Run start-ticket until it succeeds 100% without errors"
+    echo -e "${INFO} 3. Re-implement all changes on the properly initialized workspace"
+    echo -e "${INFO} 4. NEVER proceed with pr-ready on contaminated workspace"
+    echo ""
+    echo -e "${ERROR} ${RED}NO PR CREATION ALLOWED UNTIL WORKSPACE IS PROPERLY INITIALIZED${NC}"
+    exit 1
+fi
+
 # Load current ticket context
-ticket_info=$(cat .tmp/current-ticket.json)
-ticket_id=$(echo "$ticket_info" | jq -r '.ticket')
+ticket_info=$(cat "$CURRENT_TICKET_FILE")
+ticket_id=$(echo "$ticket_info" | jq -r '.ticket_id')
 ticket_title=$(echo "$ticket_info" | jq -r '.title')
 domain=$(echo "$ticket_info" | jq -r '.domain')
 branch=$(echo "$ticket_info" | jq -r '.branch')
@@ -37,8 +74,8 @@ echo -e "${INFO} Branch: $branch"
 
 # Check if we have any TDD cycles completed
 tdd_cycles=0
-if [[ -d ".spectrum/tdd/history" ]]; then
-    tdd_cycles=$(ls -1 .spectrum/tdd/history/ 2>/dev/null | wc -l)
+if [[ -d ".spectrum/archive/tdd-history" ]]; then
+    tdd_cycles=$(ls -1 .spectrum/archive/tdd-history/ 2>/dev/null | wc -l)
 fi
 
 echo -e "${INFO} TDD Cycles completed: $tdd_cycles"
@@ -131,6 +168,27 @@ else
     echo -e "${SUCCESS} Style validation passed"
 fi
 
+# Quality Gate 5: API Review (AUTOMATED for API changes)
+echo -e "\n${WORKING} Quality Gate 5: API Code Quality Review"
+
+# Check if there are any API-related changes
+api_changes=$(git diff dev..HEAD --name-only | grep -E "(Controller|Service|Request|Response|Model)\.cs" | grep -v ".Tests" | wc -l)
+
+if [[ $api_changes -gt 0 ]]; then
+    echo -e "${INFO} Detected $api_changes API file changes - running deadly sins check..."
+    
+    # Run API review command
+    if ! bash "$(dirname "$0")/api-review"; then
+        echo -e "${ERROR} ${RED}BLOCKING: API deadly sins detected${NC}"
+        echo ""
+        echo -e "${INFO} Fix API quality issues and rerun pr-ready"
+        exit 1
+    fi
+    echo -e "${SUCCESS} API review passed - no deadly sins found"
+else
+    echo -e "${INFO} No API changes detected - skipping API review"
+fi
+
 # Quality Gate Summary
 echo -e "\n${SUCCESS} ${GREEN}ALL QUALITY GATES PASSED${NC}"
 echo -e "${INFO} Quality Summary:"
@@ -138,6 +196,147 @@ echo "  ✅ Security: No critical security warnings"
 echo "  ✅ Build: Successful compilation"
 echo "  ✅ Tests: All tests passing ($test_passed/$test_total)"
 echo "  ✅ Style: Code properly formatted"
+if [[ $api_changes -gt 0 ]]; then
+    echo "  ✅ API Quality: No deadly sins detected ($api_changes files checked)"
+else
+    echo "  ✅ API Quality: No API changes (skipped)"
+fi
+
+# Authentication Checks
+echo -e "\n${WORKING} Verifying authentication configuration..."
+
+# Check GitHub CLI authentication
+echo -e "${WORKING} Checking GitHub CLI authentication..."
+gh_auth_status=$(gh auth status 2>&1)
+gh_auth_exit_code=$?
+
+if [[ $gh_auth_exit_code -ne 0 ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: GitHub CLI not authenticated${NC}"
+    echo ""
+    echo -e "${YELLOW}GitHub CLI authentication required:${NC}"
+    echo "$gh_auth_status"
+    echo ""
+    echo -e "${INFO} ${YELLOW}To fix authentication:${NC}"
+    echo "  1. Run: ${BLUE}gh auth login${NC}"
+    echo "  2. Choose: GitHub.com"
+    echo "  3. Choose: SSH (preferred) or HTTPS"
+    echo "  4. Follow the prompts to authenticate"
+    echo "  5. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+    exit 1
+fi
+
+# Check if authenticated user is Sam-3Degrees (extract from multiline output)
+gh_user=$(echo "$gh_auth_status" | awk '/Logged in to github.com account/ {account=$0; sub(/.*account /, "", account); sub(/ \(.*/, "", account)} /Active account: true/ {if(account) {print account; exit}}' || echo "unknown")
+if [[ "$gh_user" != "Sam-3Degrees" ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: GitHub CLI authenticated as wrong user${NC}"
+    echo ""
+    echo -e "${YELLOW}Current user: $gh_user${NC}"
+    echo -e "${YELLOW}Required user: Sam-3Degrees${NC}"
+    echo ""
+    echo -e "${INFO} ${YELLOW}To fix authentication:${NC}"
+    echo "  1. Logout current user: ${BLUE}gh auth logout${NC}"
+    echo "  2. Login as Sam-3Degrees: ${BLUE}gh auth login${NC}"
+    echo "  3. Follow prompts to authenticate as Sam-3Degrees"
+    echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+    exit 1
+fi
+echo -e "${SUCCESS} GitHub CLI authenticated as Sam-3Degrees"
+
+# Check SSH key configuration
+echo -e "${WORKING} Checking SSH key configuration..."
+
+# Check if SSH config exists and has correct settings for github.com
+if [[ ! -f ~/.ssh/config ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: SSH config file not found${NC}"
+    echo ""
+    echo -e "${INFO} ${YELLOW}SSH configuration required:${NC}"
+    echo "  1. Create ~/.ssh/config with github.com configuration"
+    echo "  2. Ensure Sam-3Degrees SSH key is specified"
+    echo "  3. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+    exit 1
+fi
+
+# Check if github.com host is configured correctly
+github_ssh_key=$(grep -A 3 "^Host github.com$" ~/.ssh/config | grep "IdentityFile" | awk '{print $2}' | head -n1)
+
+if [[ -z "$github_ssh_key" ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: GitHub SSH configuration not found${NC}"
+    echo ""
+    echo -e "${YELLOW}SSH config missing github.com host configuration${NC}"
+    echo ""
+    echo -e "${INFO} ${YELLOW}Required SSH config format:${NC}"
+    echo "Host github.com"
+    echo "   HostName github.com"
+    echo "   User git"
+    echo "   IdentityFile ~/.ssh/id_ed25519_sam_3degrees"
+    echo ""
+    echo -e "${INFO} Add this configuration to ~/.ssh/config and rerun pr-ready"
+    exit 1
+fi
+
+# Expand tilde in SSH key path
+expanded_ssh_key="${github_ssh_key/#\~/$HOME}"
+
+# Check if the SSH key file exists
+if [[ ! -f "$expanded_ssh_key" ]]; then
+    echo -e "${ERROR} ${RED}BLOCKING: SSH key file not found${NC}"
+    echo ""
+    echo -e "${YELLOW}SSH key file does not exist: $github_ssh_key${NC}"
+    echo ""
+    echo -e "${INFO} ${YELLOW}To fix SSH key:${NC}"
+    echo "  1. Ensure Sam-3Degrees SSH key exists at: $github_ssh_key"
+    echo "  2. Or update ~/.ssh/config to point to correct key file"
+    echo "  3. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+    exit 1
+fi
+
+# Check if SSH key is for Sam-3Degrees (check filename pattern)
+if [[ "$github_ssh_key" != *"sam_3degrees"* ]]; then
+    echo -e "${YELLOW} Warning: SSH key filename doesn't contain 'sam_3degrees': $github_ssh_key"
+    echo -e "${INFO} Ensure this is the correct SSH key for Sam-3Degrees account"
+fi
+
+echo -e "${SUCCESS} SSH key configured: $github_ssh_key"
+
+# Test SSH connection to GitHub
+echo -e "${WORKING} Testing SSH connection to GitHub..."
+ssh_test=$(ssh -T git@github.com 2>&1)
+ssh_exit_code=$?
+
+# SSH to GitHub returns exit code 1 on successful authentication (expected behavior)
+if [[ $ssh_exit_code -eq 1 ]] && [[ "$ssh_test" == *"successfully authenticated"* ]]; then
+    # Extract username from SSH test response
+    ssh_user=$(echo "$ssh_test" | grep "successfully authenticated" | sed 's/.*Hi \([^!]*\)!.*/\1/')
+    if [[ "$ssh_user" == "Sam-3Degrees" ]]; then
+        echo -e "${SUCCESS} SSH authentication verified as Sam-3Degrees"
+    else
+        echo -e "${ERROR} ${RED}BLOCKING: SSH authenticated as wrong user${NC}"
+        echo ""
+        echo -e "${YELLOW}SSH authenticated as: $ssh_user${NC}"
+        echo -e "${YELLOW}Required user: Sam-3Degrees${NC}"
+        echo ""
+        echo -e "${INFO} ${YELLOW}To fix SSH authentication:${NC}"
+        echo "  1. Ensure ~/.ssh/config points to Sam-3Degrees SSH key"
+        echo "  2. Verify SSH key is added to Sam-3Degrees GitHub account"
+        echo "  3. Test connection: ${BLUE}ssh -T git@github.com${NC}"
+        echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+        exit 1
+    fi
+else
+    echo -e "${ERROR} ${RED}BLOCKING: SSH connection to GitHub failed${NC}"
+    echo ""
+    echo -e "${YELLOW}SSH test output:${NC}"
+    echo "$ssh_test"
+    echo ""
+    echo -e "${INFO} ${YELLOW}To fix SSH connection:${NC}"
+    echo "  1. Ensure SSH key is added to Sam-3Degrees GitHub account"
+    echo "  2. Check SSH key permissions: ${BLUE}chmod 600 $github_ssh_key${NC}"
+    echo "  3. Test connection: ${BLUE}ssh -T git@github.com${NC}"
+    echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Authentication configuration verified"
 
 # Dev Branch Sync Check
 echo -e "\n${WORKING} Checking if branch is up to date with dev..."
@@ -178,8 +377,110 @@ echo -e "${SUCCESS} Branch is up to date with dev"
 # Git Status Check
 echo -e "\n${WORKING} Checking git status..."
 git_status=$(git status --porcelain)
+
+# Clean up TDD history files before final checks
+echo -e "\n${WORKING} Cleaning up temporary TDD history files..."
+tdd_files_cleaned=0
+
+# Remove any TDD history JSON files from the working directory
+if find . -name "*tdd-history*.json" -type f | grep -q .; then
+    tdd_files_cleaned=$(find . -name "*tdd-history*.json" -type f | wc -l)
+    echo -e "${INFO} Found $tdd_files_cleaned TDD history files to remove"
+    find . -name "*tdd-history*.json" -type f -delete
+    echo -e "${SUCCESS} Removed $tdd_files_cleaned temporary TDD history files"
+else
+    echo -e "${SUCCESS} No TDD history files found to clean up"
+fi
+
+# Remove .tdd-state file if it exists
+if [[ -f ".tdd-state" ]]; then
+    rm -f ".tdd-state"
+    echo -e "${SUCCESS} Removed .tdd-state file"
+fi
+
+# Enhanced ticket documentation creation
+echo -e "\n${WORKING} Creating domain-based ticket documentation..."
+
+# Detect primary domain directory from git changes  
+changed_dirs=$(git diff --name-only dev...HEAD | grep "^src/" | grep -v "\.Tests/" | sed 's|/[^/]*$||' | sort -u)
+
+if [[ $(echo "$changed_dirs" | wc -l) -eq 1 ]]; then
+    # Single directory - use it directly
+    primary_location="$changed_dirs"
+else
+    # Multiple directories - find the most frequently modified
+    primary_location=$(git diff --name-only dev...HEAD | grep "^src/" | grep -v "\.Tests/" | sed 's|/[^/]*$||' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+fi
+
+if [[ -n "$primary_location" && -d "$primary_location" ]]; then
+    # Create tickets subdirectory if it doesn't exist
+    tickets_dir="$primary_location/tickets"
+    mkdir -p "$tickets_dir"
+    
+    # Generate proper filename from ticket title
+    clean_title=$(echo "$ticket_title" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-zA-Z0-9-]//g')
+    ticket_filename="$ticket_id-$clean_title.md"
+    final_ticket_path="$tickets_dir/$ticket_filename"
+    
+    # Check if ticket file already exists
+    if [[ ! -f "$final_ticket_path" ]]; then
+        # Create comprehensive ticket documentation
+        cat > "$final_ticket_path" << EOF
+# $ticket_id: $ticket_title
+
+## 📋 **Ticket Summary**
+
+**Status**: ✅ **COMPLETED**  
+**Domain**: $domain  
+**Implementation**: TDD with $tdd_cycles RED-GREEN-REFACTOR cycles  
+
+## 🧪 **Quality Validation**
+
+### **TDD Implementation**
+- **TDD Cycles**: $tdd_cycles RED-GREEN-REFACTOR cycles completed
+- **Test Coverage**: $test_passed tests passing
+- **Development Method**: Test-first approach ensuring requirements satisfaction
+
+### **Quality Gates**
+- ✅ **Security**: No security warnings (CA3xxx, S2068, S4423)
+- ✅ **Build**: Successful compilation with no errors  
+- ✅ **Tests**: All $test_passed tests passing
+- ✅ **Style**: Code properly formatted according to Centro standards
+
+## 🚀 **Integration & Usage**
+
+Implementation completed using TDD methodology with comprehensive quality validation. Ready for integration and production use.
+
+---
+
+## 🏆 **$ticket_id COMPLETED SUCCESSFULLY**
+EOF
+        
+        # Stage the ticket file
+        git add "$final_ticket_path"
+        echo -e "${SUCCESS} Ticket documentation created: $final_ticket_path"
+    else
+        echo -e "${SUCCESS} Ticket documentation already exists: $final_ticket_path"
+    fi
+    
+    # Also check for and handle legacy ticket files from .spectrum/tmp or other locations
+    legacy_ticket_file=$(find .spectrum/tmp -name "discovered-ticket-details.md" -type f 2>/dev/null | head -1)
+    if [[ -n "$legacy_ticket_file" && -f "$legacy_ticket_file" ]]; then
+        echo -e "${INFO} Found legacy ticket file, integrating content: $legacy_ticket_file"
+        # Could append or merge content here if needed in the future
+        rm -f "$legacy_ticket_file"
+        echo -e "${SUCCESS} Legacy ticket file cleaned up"
+    fi
+else
+    echo -e "${YELLOW} Could not detect primary domain location, skipping automatic ticket documentation"
+    echo -e "${INFO} Manual ticket documentation may be needed"
+fi
+
+# Update git status after cleanup
+git_status=$(git status --porcelain)
+
 if [[ -n "$git_status" ]]; then
-    echo -e "${YELLOW} Uncommitted changes found:"
+    echo -e "${YELLOW} Uncommitted changes found after cleanup:"
     git status --short
     echo ""
     echo -e "${INFO} ${YELLOW}Committing remaining changes before PR creation...${NC}"
@@ -189,7 +490,18 @@ if [[ -n "$git_status" ]]; then
     
     # Generate commit message based on changes
     changed_files=$(git diff --cached --name-only | wc -l)
-    commit_message="Final changes for $ticket_id
+    if [[ $tdd_files_cleaned -gt 0 ]]; then
+        commit_message="Final changes for $ticket_id
+
+- $changed_files files modified
+- Removed $tdd_files_cleaned temporary TDD history files
+- Ready for PR creation
+
+🤖 Generated with [opencode](https://opencode.ai)
+
+Co-Authored-By: opencode <noreply@opencode.ai>"
+    else
+        commit_message="Final changes for $ticket_id
 
 - $changed_files files modified
 - Ready for PR creation
@@ -197,6 +509,7 @@ if [[ -n "$git_status" ]]; then
 🤖 Generated with [opencode](https://opencode.ai)
 
 Co-Authored-By: opencode <noreply@opencode.ai>"
+    fi
     
     git commit -m "$commit_message"
     echo -e "${SUCCESS} Remaining changes committed automatically"
@@ -217,8 +530,18 @@ files_changed=$(git diff dev..HEAD --name-only | wc -l)
 insertions=$(git diff dev..HEAD --shortstat | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo "0")
 deletions=$(git diff dev..HEAD --shortstat | grep -o '[0-9]* deletion' | grep -o '[0-9]*' || echo "0")
 
+# Re-check API changes for PR description
+api_changes_for_pr=$(git diff dev..HEAD --name-only | grep -E "(Controller|Service|Request|Response|Model)\.cs" | grep -v ".Tests" | wc -l)
+
 # Create PR
 echo -e "\n${PR} Creating Pull Request..."
+
+# Generate API quality section for PR description
+if [[ $api_changes_for_pr -gt 0 ]]; then
+    api_quality_text="🔌 **API Quality**: No deadly sins detected ($api_changes_for_pr API files checked)  "
+else
+    api_quality_text="🔌 **API Quality**: No API changes detected  "
+fi
 
 # Generate comprehensive PR description
 pr_description="## Summary
@@ -241,6 +564,7 @@ All quality gates automated and verified:
 🔨 **Build**: Successful compilation with no errors  
 🧪 **Tests**: All $test_passed tests passing  
 💅 **Style**: Code properly formatted according to Centro standards  
+$api_quality_text
 
 ## Test Coverage
 Implementation includes comprehensive test coverage developed through $tdd_cycles TDD cycles:
@@ -271,33 +595,80 @@ Generated with [opencode](https://opencode.ai)"
 echo -e "${WORKING} Creating PR targeting dev branch..."
 
 # Try creating PR with explicit head specification to handle remote branch issues
-if ! gh pr create --base dev --head "$branch" --title "$ticket_id: $ticket_title" --body "$pr_description"; then
+pr_create_output=""
+if ! pr_create_output=$(gh pr create --base dev --head "$branch" --title "$ticket_id: $ticket_title" --body "$pr_description" 2>&1); then
     echo -e "${ERROR} Failed to create PR with --head flag, trying without..."
+    echo -e "${YELLOW}First attempt output:${NC} $pr_create_output"
     
     # Fallback: try without --head flag
-    if ! gh pr create --base dev --title "$ticket_id: $ticket_title" --body "$pr_description"; then
-        echo -e "${ERROR} Failed to create PR automatically"
-        echo -e "${INFO} Troubleshooting:"
-        echo "  1. Ensure GitHub CLI is installed and configured: gh auth status"
-        echo "  2. Check repository permissions"
-        echo "  3. Verify remote origin is set correctly"
+    if ! pr_create_output=$(gh pr create --base dev --title "$ticket_id: $ticket_title" --body "$pr_description" 2>&1); then
+        echo -e "${ERROR} ${RED}CRITICAL: Failed to create PR automatically${NC}"
         echo ""
-        echo -e "${INFO} ${YELLOW}MANUAL PR CREATION REQUIRED:${NC}"
+        echo -e "${YELLOW}PR creation failed with output:${NC}"
+        echo "$pr_create_output"
+        echo ""
+        echo -e "${INFO} ${YELLOW}This is a CRITICAL workflow failure${NC}"
+        echo -e "${INFO} Troubleshooting steps:"
+        echo "  1. GitHub CLI authentication: ${BLUE}gh auth status${NC}"
+        echo "  2. Repository permissions: ${BLUE}gh repo view${NC}"
+        echo "  3. Branch status: ${BLUE}gh pr list --head $branch${NC}"
+        echo "  4. Remote configuration: ${BLUE}git remote -v${NC}"
+        echo ""
+        echo -e "${ERROR} ${RED}MANUAL INTERVENTION REQUIRED:${NC}"
         repo_url="https://github.com/$(git remote get-url origin | sed 's/.*github.com[:/]//' | sed 's/.git$//')"
-        echo "  4. Create PR manually at: $repo_url/pull/new/$branch"
-        echo "  5. After creating PR manually, update workflow state:"
-        echo "     jq '.phase = \"pr-created\" | .pr_url = \"YOUR_PR_URL\"' .tmp/current-ticket.json > tmp && mv tmp .tmp/current-ticket.json"
+        echo "  1. Create PR manually at: ${BLUE}$repo_url/pull/new/$branch${NC}"
+        echo "  2. After manual PR creation, update workflow state:"
+        echo "     ${BLUE}jq '.phase = \"pr-created\" | .pr_url = \"YOUR_ACTUAL_PR_URL\" | .quality_gates_passed = true | .files_changed = $files_changed | .test_count = $test_passed' $CURRENT_TICKET_FILE > tmp && mv tmp $CURRENT_TICKET_FILE${NC}"
+        echo ""
+        echo -e "${INFO} ${YELLOW}IMPORTANT: Manual workflow state update is REQUIRED${NC}"
+        echo -e "${INFO} Without proper state update, pr-cleanup and Agent-Knowledge notification will fail"
         echo ""
         echo -e "${INFO} Quality gates passed - branch is ready for PR creation"
         exit 1
     fi
 fi
 
+echo -e "${SUCCESS} PR created successfully"
+if [[ -n "$pr_create_output" ]]; then
+    echo -e "${INFO} GitHub response: $pr_create_output"
+fi
+
 # Get PR URL for workflow state update
-if ! pr_url=$(gh pr view --json url --jq '.url' 2>/dev/null); then
-    echo -e "${ERROR} Could not retrieve PR URL"
-    echo -e "${INFO} PR may have been created - check GitHub manually"
-    exit 1
+echo -e "${WORKING} Retrieving PR URL for workflow state update..."
+if ! pr_url=$(gh pr view --json url --jq '.url' 2>&1); then
+    echo -e "${YELLOW} Warning: Could not retrieve PR URL automatically"
+    echo -e "${INFO} PR URL retrieval output: $pr_url"
+    echo ""
+    echo -e "${INFO} ${YELLOW}Workflow State Issue Detected${NC}"
+    echo -e "${INFO} The PR was likely created but the URL cannot be stored in workflow state"
+    echo -e "${INFO} This will affect:"
+    echo "  - Automated pr-cleanup process (will need manual verification)"
+    echo "  - Agent-Knowledge notification system"
+    echo ""
+    echo -e "${INFO} ${BLUE}AI Agent Note:${NC} ${YELLOW}PR URL not captured in workflow state${NC}"
+    echo -e "${INFO} When pr-cleanup is run, you will need to manually verify PR merge status"
+    echo -e "${INFO} or update the workflow state with the actual PR URL for automated verification"
+    echo ""
+    echo -e "${INFO} Continuing with partial workflow state (PR creation succeeded)"
+    
+    # Update ticket state without PR URL but mark as PR created
+    jq '.phase = "pr-created" | .pr_created_at = now | .pr_created_at |= todate | .pr_url = null | .quality_gates_passed = true | .files_changed = $files | .test_count = $tests | .pr_url_retrieval_failed = true' \
+       --arg files "$files_changed" \
+       --arg tests "$test_passed" \
+       $CURRENT_TICKET_FILE > $CURRENT_TICKET_FILE.tmp
+    mv $CURRENT_TICKET_FILE.tmp $CURRENT_TICKET_FILE
+    
+    pr_url="[PR_URL_NOT_CAPTURED]"
+else
+    echo -e "${SUCCESS} PR URL retrieved successfully"
+    
+    # Update ticket state with PR URL
+    jq '.phase = "pr-created" | .pr_created_at = now | .pr_created_at |= todate | .pr_url = $url | .quality_gates_passed = true | .files_changed = $files | .test_count = $tests' \
+       --arg url "$pr_url" \
+       --arg files "$files_changed" \
+       --arg tests "$test_passed" \
+       $CURRENT_TICKET_FILE > $CURRENT_TICKET_FILE.tmp
+    mv $CURRENT_TICKET_FILE.tmp $CURRENT_TICKET_FILE
 fi
 
 # Update ticket state to PR created
@@ -305,8 +676,8 @@ jq '.phase = "pr-created" | .pr_created_at = now | .pr_created_at |= todate | .p
    --arg url "$pr_url" \
    --arg files "$files_changed" \
    --arg tests "$test_passed" \
-   .tmp/current-ticket.json > .tmp/current-ticket.json.tmp
-mv .tmp/current-ticket.json.tmp .tmp/current-ticket.json
+   $CURRENT_TICKET_FILE > $CURRENT_TICKET_FILE.tmp
+mv $CURRENT_TICKET_FILE.tmp $CURRENT_TICKET_FILE
 
 echo -e "\n${SUCCESS} ${GREEN}PULL REQUEST CREATED SUCCESSFULLY${NC}"
 echo -e "${INFO} Summary:"

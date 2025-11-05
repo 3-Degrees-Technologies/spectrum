@@ -27,8 +27,8 @@ if [ $# -lt 2 ]; then
     echo -e "${INFO}   split <parent_id> - Break down existing ticket that failed validation"
     echo -e "${INFO} Examples:"
     echo -e "${INFO}   ./bulk_breakdown epic 'API Rewrite' 'Convert to GraphQL'"
-    echo -e "${INFO}   ./bulk_breakdown implementation 'CLI Framework' 'Click + config + auth' SPE-10"
-    echo -e "${INFO}   ./bulk_breakdown split SPE-15"
+    echo -e "${INFO}   ./bulk_breakdown implementation 'CLI Framework' 'Click + config + auth' CEN-10"
+    echo -e "${INFO}   ./bulk_breakdown split CEN-15"
     exit 1
 fi
 
@@ -69,7 +69,7 @@ This epic will be broken down into sequential Research → Implementation phases
 - Implementation phase: Coordinated development across multiple technical areas")
         
         if [[ $epic_result == *"Created"* ]]; then
-            epic_id=$(echo "$epic_result" | grep -o 'SPE-[0-9]*' | head -1)
+            epic_id=$(echo "$epic_result" | grep -o 'CEN-[0-9]*' | head -1)
             echo -e "${SUCCESS} Created epic parent: $epic_id"
             
             # Create research phase
@@ -96,7 +96,7 @@ Design the technical architecture and implementation approach for the $title pro
 - Architecture decisions documented and justified" "$epic_id")
             
             if [[ $research_result == *"Created"* ]]; then
-                research_id=$(echo "$research_result" | grep -o 'SPE-[0-9]*' | head -1)
+                research_id=$(echo "$research_result" | grep -o 'CEN-[0-9]*' | head -1)
                 echo -e "${SUCCESS} Created research phase: $research_id"
                 
                 # Create implementation parent
@@ -120,7 +120,7 @@ The implementation is broken down into focused subtasks that each handle a speci
 - Performance and functionality requirements met" "$epic_id")
                 
                 if [[ $impl_result == *"Created"* ]]; then
-                    impl_parent_id=$(echo "$impl_result" | grep -o 'SPE-[0-9]*' | head -1)
+                    impl_parent_id=$(echo "$impl_result" | grep -o 'CEN-[0-9]*' | head -1)
                     echo -e "${SUCCESS} Created implementation parent: $impl_parent_id"
                     
                     echo -e "${WARNING} ${YELLOW}Epic structure created successfully!${NC}"
@@ -179,7 +179,7 @@ The implementation is broken down into focused subtasks that each handle a speci
 - Functionality and performance requirements met"
         
         echo -e "${WORKING} Updating parent ticket description..."
-        saber description "$parent_id" "$parent_desc"
+        python3 ./.tools/saber.py description "$parent_id" "$parent_desc"
         echo -e "${SUCCESS} Converted $parent_id to parent ticket"
         
         echo -e "${WARNING} ${YELLOW}Implementation parent updated!${NC}"
@@ -195,8 +195,8 @@ The implementation is broken down into focused subtasks that each handle a speci
         ;;
         
     "split")
-        if [ -z "$title" ] || [[ ! "$title" =~ ^SPE-[0-9]+$ ]]; then
-            echo -e "${ERROR} Valid ticket ID required for split (e.g., SPE-123)"
+        if [ -z "$title" ] || [[ ! "$title" =~ ^CEN-[0-9]+$ ]]; then
+            echo -e "${ERROR} Valid ticket ID required for split (e.g., CEN-123)"
             exit 1
         fi
         
@@ -205,7 +205,7 @@ The implementation is broken down into focused subtasks that each handle a speci
         echo -e "${INFO} Analyzing $ticket_id for breakdown opportunities..."
         
         # Get ticket details
-        ticket_info=$(saber get "$ticket_id" 2>/dev/null)
+        ticket_info=$(python3 ./.tools/saber.py get "$ticket_id" 2>/dev/null)
         if [ $? -ne 0 ]; then
             echo -e "${ERROR} Failed to retrieve ticket $ticket_id"
             exit 1
@@ -236,7 +236,7 @@ The work is broken down into focused subtasks that each handle a specific aspect
 - Original requirements fully met"
             
             echo -e "${WORKING} Converting to parent ticket..."
-            saber description "$ticket_id" "$parent_desc"
+            python3 ./.tools/saber.py description "$ticket_id" "$parent_desc"
             echo -e "${SUCCESS} Converted $ticket_id to parent ticket"
             
             echo -e "${WARNING} ${YELLOW}Ticket converted to parent!${NC}"

@@ -26,15 +26,37 @@ fi
 echo -e "${COMMIT} ${GREEN}TDD COMMIT${NC}: Save working increment"
 
 # Check if we're in a TDD cycle
-tdd_state_file=".spectrum/tdd/current-cycle.json"
-if [[ ! -f "$tdd_state_file" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+TDD_STATE_FILE="$SPECTRUM_STATE_DIR/current-tdd-cycle.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR" ".spectrum/archive/tdd-history"
+
+if [[ ! -f "$TDD_STATE_FILE" ]]; then
     echo -e "${ERROR} No active TDD cycle found"
     echo -e "${INFO} Please complete tdd-red and tdd-green phases first"
     exit 1
 fi
 
+# CRITICAL: Validate that start-ticket completed successfully (check via current ticket file)
+CURRENT_TICKET_FILE="$SPECTRUM_STATE_DIR/current-ticket.json"
+if [[ ! -f "$CURRENT_TICKET_FILE" ]] || ! jq -e '.status == "in_progress" and .started_at != null and .branch != null' "$CURRENT_TICKET_FILE" >/dev/null 2>&1; then
+    echo -e "${ERROR} ${RED}FATAL: Invalid ticket workflow state${NC}"
+    echo -e "${INFO} ${RED}start-ticket command did not complete successfully${NC}"
+    echo ""
+    echo -e "${ERROR} ${RED}TDD COMMIT CANNOT PROCEED ON CONTAMINATED WORKSPACE${NC}"
+    echo -e "${INFO} Required actions:"
+    echo -e "${INFO} 1. Fix any issues preventing start-ticket from completing"
+    echo -e "${INFO} 2. Re-run start-ticket until it succeeds 100% without errors"
+    echo -e "${INFO} 3. Re-run complete TDD cycle (red, green, commit)"
+    echo ""
+    echo -e "${ERROR} ${RED}NO COMMITS ALLOWED UNTIL WORKSPACE IS PROPERLY INITIALIZED${NC}"
+    exit 1
+fi
+
 # Load TDD state
-tdd_state=$(cat "$tdd_state_file")
+tdd_state=$(cat "$TDD_STATE_FILE")
 cycle_number=$(echo "$tdd_state" | jq -r '.cycle_number')
 current_phase=$(echo "$tdd_state" | jq -r '.phase')
 test_description=$(echo "$tdd_state" | jq -r '.test_description')
@@ -55,8 +77,8 @@ echo -e "${INFO} Test: $test_description"
 echo -e "${INFO} Commit: $commit_message"
 
 # Update TDD state to COMMIT phase
-jq '.phase = "commit" | .commit_started = now | .commit_started |= todate' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "commit" | .commit_started = now | .commit_started |= todate' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 # Show current phase status
 if [[ "$current_phase" == "refactor-completed" ]]; then
@@ -106,8 +128,8 @@ fi
 echo -e "\n${COMMIT} ${GREEN}COMMIT Phase${NC}: Saving working increment"
 
 # Update TDD state to COMMIT phase (already done above, but for clarity)
-jq '.phase = "commit-validating"' "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "commit-validating"' "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 echo -e "${WORKING} Preparing commit..."
 
@@ -139,12 +161,11 @@ git commit -m "$full_commit_message" || {
 }
 
 # Complete TDD cycle
-jq '.phase = "completed" | .completed_at = now | .completed_at |= todate | .commit_message = $msg' --arg msg "$commit_message" "$tdd_state_file" > "$tdd_state_file.tmp"
-mv "$tdd_state_file.tmp" "$tdd_state_file"
+jq '.phase = "completed" | .completed_at = now | .completed_at |= todate | .commit_message = $msg' --arg msg "$commit_message" "$TDD_STATE_FILE" > "$TDD_STATE_FILE.tmp"
+mv "$TDD_STATE_FILE.tmp" "$TDD_STATE_FILE"
 
 # Archive completed cycle
-mkdir -p .spectrum/tdd/history
-cp "$tdd_state_file" ".spectrum/tdd/history/cycle-$cycle_number-$(date +%Y%m%d-%H%M%S).json"
+cp "$TDD_STATE_FILE" ".spectrum/archive/tdd-history/cycle-$cycle_number-$(date +%Y%m%d-%H%M%S).json"
 
 echo -e "\n${SUCCESS} ${GREEN}TDD CYCLE #$cycle_number COMPLETE${NC}"
 echo -e "${INFO} Summary:"

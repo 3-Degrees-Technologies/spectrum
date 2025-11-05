@@ -18,15 +18,22 @@ INTEGRATION="🔗"
 echo -e "${TEST} ${GREEN}INTEGRATION GREEN CYCLE${NC}: Making the test pass"
 
 # Check if we have a test state from integration-red
-if [[ ! -f ".tmp/integration-test-state.json" ]]; then
+SPECTRUM_STATE_DIR=".spectrum/state"
+SPECTRUM_TMP_DIR=".spectrum/tmp"
+INTEGRATION_STATE_FILE="$SPECTRUM_STATE_DIR/integration-test-state.json"
+
+# Ensure Spectrum directory structure exists
+mkdir -p "$SPECTRUM_STATE_DIR" "$SPECTRUM_TMP_DIR"
+
+if [[ ! -f "$INTEGRATION_STATE_FILE" ]]; then
     echo -e "${ERROR} No integration test state found. Please run ./integration-red first"
     exit 1
 fi
 
 # Read test state
-test_file=$(jq -r '.test_file' .tmp/integration-test-state.json)
-test_description=$(jq -r '.test_description' .tmp/integration-test-state.json)
-service_type=$(jq -r '.service_type' .tmp/integration-test-state.json)
+test_file=$(jq -r '.test_file' "$INTEGRATION_STATE_FILE")
+test_description=$(jq -r '.test_description' "$INTEGRATION_STATE_FILE")
+service_type=$(jq -r '.service_type' "$INTEGRATION_STATE_FILE")
 
 echo -e "${INFO} Test: $test_description"
 echo -e "${INFO} File: $test_file"
@@ -84,7 +91,7 @@ collection_path=$(dirname "$test_file")
 echo -e "  bruno run '$collection_path' --env LocalStack"
 
 # Update test state
-jq '.phase = "green"' .tmp/integration-test-state.json > .tmp/integration-test-state.json.tmp
-mv .tmp/integration-test-state.json.tmp .tmp/integration-test-state.json
+jq '.phase = "green"' $INTEGRATION_STATE_FILE > $INTEGRATION_STATE_FILE.tmp
+mv $INTEGRATION_STATE_FILE.tmp $INTEGRATION_STATE_FILE
 
 echo -e "\n${SUCCESS} Ready for GREEN phase implementation!"

@@ -135,8 +135,6 @@ PRO-123: Wise Payment Provider Implementation [Parent]
 
 **Saber - Ultimate Linear Tool:**
 
-
-
 - `saber.py get {PREFIX}-123` - Get ticket details
 - `saber.py status {PREFIX}-123 "Status"` - Update status  
 - `saber.py list [status]` - List tickets with filtering

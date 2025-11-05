@@ -2,8 +2,6 @@
 # Spectrum .tools Directory Protection Manager
 # Protects/unprotects agent .tools folders from accidental deletion
 
-set -e
-
 show_help() {
     cat << EOF
 Spectrum .tools Protection Manager
@@ -63,6 +61,11 @@ lock_tools_dirs() {
                 find "$agent_dir/.tools/commands" -type f | while read -r file; do
                     chmod 555 "$file" 2>/dev/null || true
                 done
+            fi
+            
+            # Ensure spectrum-dev is executable
+            if [[ -f "$agent_dir/.tools/spectrum-dev" ]]; then
+                chmod 555 "$agent_dir/.tools/spectrum-dev" 2>/dev/null || true
             fi
             
             echo "  ✅ Protected $agent_dir/.tools"

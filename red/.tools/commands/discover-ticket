@@ -101,7 +101,7 @@ if [[ -n "$SPECIFIC_TICKET" ]]; then
             done
         done
     fi
-    
+    U09R0NU9A3E
     # 3. Search Slack for the specific ticket
     if [[ -z "$ticket_found" ]]; then
         echo -e "${WORKING} Searching Slack for ticket details..."
@@ -237,8 +237,8 @@ else
     echo -e "${WORKING} Searching for my ticket assignments..."
 
     # Get my agent name and user ID for filtering  
-    my_agent_name="Agent-Sam"  # Fixed agent name format
-    my_user_id="U096VLDAHJ5"   # Fixed user ID
+    my_agent_name="Agent Red"  # Fixed agent name format
+    my_user_id="U09R0NU9A3E"   # Fixed user ID
 
     # Function to check if a specific ticket was completed after assignment
     check_ticket_completion() {

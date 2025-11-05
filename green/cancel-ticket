@@ -1,0 +1,394 @@
+#!/bin/bash
+
+# cancel-ticket - Comprehensive ticket cancellation with full cleanup
+# Usage: ./cancel-ticket CEN-XXX [reason]
+
+set -e
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+TICKET_ID="$1"
+CANCEL_REASON="${2:-Ticket canceled}"
+
+# Handle help flag
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo -e "${BLUE}🎯 Comprehensive Ticket Cancellation Tool${NC}"
+    echo ""
+    echo "Usage: ./cancel-ticket CEN-XXX [reason]"
+    echo ""
+    echo "Features:"
+    echo "  - Cancels ticket in Linear via saber"
+    echo "  - Removes from agent registry (active/queued tickets)"
+    echo "  - Cleans up dependency system" 
+    echo "  - Sends targeted Slack notifications"
+    echo "  - Handles parent/child relationships"
+    echo ""
+    echo "Examples:"
+    echo "  ./cancel-ticket CEN-123"
+    echo "  ./cancel-ticket CEN-456 'Requirements changed'"
+    exit 0
+fi
+
+if [ -z "$TICKET_ID" ]; then
+    echo -e "${RED}❌ Usage: ./cancel-ticket CEN-XXX [reason]${NC}"
+    exit 1
+fi
+
+echo -e "${BLUE}🎯 Comprehensive Ticket Cancellation${NC}"
+echo -e "📋 Ticket: $TICKET_ID"
+echo -e "📝 Reason: $CANCEL_REASON"
+echo ""
+
+# Step 1: Get ticket details before cancellation
+echo -e "${BLUE}🔍 Step 1: Analyzing ticket before cancellation...${NC}"
+TICKET_JSON=$(python3 .tools/saber.py get "$TICKET_ID" 2>/dev/null || echo "null")
+
+if [ "$TICKET_JSON" = "null" ]; then
+    echo -e "${RED}❌ Ticket $TICKET_ID not found${NC}"
+    exit 1
+fi
+
+# Extract ticket info
+TICKET_TITLE=$(echo "$TICKET_JSON" | jq -r '.title // "Unknown"')
+CURRENT_STATUS=$(echo "$TICKET_JSON" | jq -r '.state.name // "Unknown"')
+ASSIGNEE=$(echo "$TICKET_JSON" | jq -r '.assignee.displayName // null')
+PARENT_ID=$(echo "$TICKET_JSON" | jq -r '.parent.identifier // null')
+CHILDREN=$(echo "$TICKET_JSON" | jq -r '.children.nodes[]?.identifier // empty' | tr '\n' ' ')
+
+echo -e "📋 Title: $TICKET_TITLE"
+echo -e "📋 Current Status: $CURRENT_STATUS"
+echo -e "📋 Assignee: $ASSIGNEE"
+[ "$PARENT_ID" != "null" ] && echo -e "📋 Parent: $PARENT_ID"
+[ -n "$CHILDREN" ] && echo -e "📋 Children: $CHILDREN"
+
+# Step 2: Cancel ticket in Linear
+echo -e "${BLUE}🔄 Step 2: Canceling ticket in Linear...${NC}"
+python3 .tools/saber.py status "$TICKET_ID" "Canceled"
+echo -e "${GREEN}✅ $TICKET_ID status set to Canceled${NC}"
+
+# Step 3: Clean up agent registry
+echo -e "${BLUE}🔄 Step 3: Cleaning up agent registry...${NC}"
+REGISTRY_FILE="agent-registry.json"
+TEMP_REGISTRY=$(mktemp)
+AGENT_FREED=""
+QUEUE_CLEANED=""
+
+# Check if ticket is in any agent's active or queued tickets
+python3 << EOF
+import json
+import sys
+
+try:
+    with open('$REGISTRY_FILE', 'r') as f:
+        registry = json.load(f)
+    
+    updated = False
+    agent_freed = ""
+    queue_cleaned = ""
+    
+    for agent_name, agent_data in registry.items():
+        # Remove from active tickets
+        if '$TICKET_ID' in agent_data.get('active_tickets', []):
+            agent_data['active_tickets'].remove('$TICKET_ID')
+            agent_freed = agent_name
+            updated = True
+            # Set agent to available if no more active tickets
+            if not agent_data['active_tickets']:
+                agent_data['status'] = 'available'
+        
+        # Remove from queued tickets
+        if '$TICKET_ID' in agent_data.get('queued_tickets', []):
+            agent_data['queued_tickets'].remove('$TICKET_ID')
+            queue_cleaned = agent_name
+            updated = True
+    
+    if updated:
+        # Update last_updated timestamp
+        from datetime import datetime
+        if agent_freed:
+            registry[agent_freed]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        if queue_cleaned and queue_cleaned != agent_freed:
+            registry[queue_cleaned]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        
+        with open('$TEMP_REGISTRY', 'w') as f:
+            json.dump(registry, f, indent=2)
+        
+        print(f"AGENT_FREED={agent_freed}")
+        print(f"QUEUE_CLEANED={queue_cleaned}")
+    else:
+        print("AGENT_FREED=")
+        print("QUEUE_CLEANED=")
+
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+
+# Capture the output
+CLEANUP_RESULT=$(python3 << 'EOF'
+import json
+import sys
+
+try:
+    with open('agent-registry.json', 'r') as f:
+        registry = json.load(f)
+    
+    updated = False
+    agent_freed = ""
+    queue_cleaned = ""
+    
+    for agent_name, agent_data in registry.items():
+        # Remove from active tickets
+        if 'TICKET_ID_PLACEHOLDER' in agent_data.get('active_tickets', []):
+            agent_data['active_tickets'].remove('TICKET_ID_PLACEHOLDER')
+            agent_freed = agent_name
+            updated = True
+            # Set agent to available if no more active tickets
+            if not agent_data['active_tickets']:
+                agent_data['status'] = 'available'
+        
+        # Remove from queued tickets
+        if 'TICKET_ID_PLACEHOLDER' in agent_data.get('queued_tickets', []):
+            agent_data['queued_tickets'].remove('TICKET_ID_PLACEHOLDER')
+            queue_cleaned = agent_name
+            updated = True
+    
+    if updated:
+        # Update last_updated timestamp
+        from datetime import datetime
+        if agent_freed:
+            registry[agent_freed]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        if queue_cleaned and queue_cleaned != agent_freed:
+            registry[queue_cleaned]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        
+        with open('agent-registry.json', 'w') as f:
+            json.dump(registry, f, indent=2)
+        
+        print(f"{agent_freed}|{queue_cleaned}")
+    else:
+        print("|")
+
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+
+# Replace placeholder and execute
+CLEANUP_RESULT=$(echo "$CLEANUP_RESULT" | sed "s/TICKET_ID_PLACEHOLDER/$TICKET_ID/g")
+
+# Actually run the cleanup
+python3 << EOF
+import json
+import sys
+
+try:
+    with open('$REGISTRY_FILE', 'r') as f:
+        registry = json.load(f)
+    
+    updated = False
+    agent_freed = ""
+    queue_cleaned = ""
+    
+    for agent_name, agent_data in registry.items():
+        # Remove from active tickets
+        if '$TICKET_ID' in agent_data.get('active_tickets', []):
+            agent_data['active_tickets'].remove('$TICKET_ID')
+            agent_freed = agent_name
+            updated = True
+            # Set agent to available if no more active tickets
+            if not agent_data['active_tickets']:
+                agent_data['status'] = 'available'
+        
+        # Remove from queued tickets
+        if '$TICKET_ID' in agent_data.get('queued_tickets', []):
+            agent_data['queued_tickets'].remove('$TICKET_ID')
+            if not queue_cleaned:
+                queue_cleaned = agent_name
+            updated = True
+    
+    if updated:
+        # Update last_updated timestamp
+        from datetime import datetime
+        if agent_freed:
+            registry[agent_freed]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        if queue_cleaned and queue_cleaned != agent_freed:
+            registry[queue_cleaned]['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+        
+        with open('$REGISTRY_FILE', 'w') as f:
+            json.dump(registry, f, indent=2)
+        
+        if agent_freed:
+            print(f"AGENT_FREED: {agent_freed}")
+        if queue_cleaned:
+            print(f"QUEUE_CLEANED: {queue_cleaned}")
+    
+    print("REGISTRY_UPDATED")
+
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+
+# Step 4: Clean up dependencies
+echo -e "${BLUE}🔄 Step 4: Cleaning up dependency system...${NC}"
+DEPS_FILE=".ticket_dependencies.json"
+UNBLOCKED_TICKETS=""
+
+if [ -f "$DEPS_FILE" ]; then
+    # Get tickets that will be unblocked
+    UNBLOCKED_TICKETS=$(python3 << EOF
+import json
+import sys
+
+try:
+    with open('$DEPS_FILE', 'r') as f:
+        deps = json.load(f)
+    
+    unblocked = []
+    
+    # Find tickets blocked by this ticket - these need REVIEW, not automatic unblocking
+    for ticket_id, ticket_deps in deps.items():
+        if '$TICKET_ID' in ticket_deps.get('blocked_by', []):
+            unblocked.append(ticket_id)
+    
+    # Remove this ticket from dependency system
+    if '$TICKET_ID' in deps:
+        # Remove tickets this was blocking
+        for blocked_ticket in deps['$TICKET_ID'].get('blocks', []):
+            if blocked_ticket in deps:
+                if '$TICKET_ID' in deps[blocked_ticket]['blocked_by']:
+                    deps[blocked_ticket]['blocked_by'].remove('$TICKET_ID')
+        
+        # Remove tickets this was blocked by
+        for blocking_ticket in deps['$TICKET_ID'].get('blocked_by', []):
+            if blocking_ticket in deps:
+                if '$TICKET_ID' in deps[blocking_ticket]['blocks']:
+                    deps[blocking_ticket]['blocks'].remove('$TICKET_ID')
+        
+        # Remove this ticket entirely
+        del deps['$TICKET_ID']
+    
+    # Also check other tickets for references to this ticket
+    for ticket_id, ticket_deps in deps.items():
+        if '$TICKET_ID' in ticket_deps.get('blocks', []):
+            ticket_deps['blocks'].remove('$TICKET_ID')
+        if '$TICKET_ID' in ticket_deps.get('blocked_by', []):
+            ticket_deps['blocked_by'].remove('$TICKET_ID')
+    
+    # Save updated dependencies
+    with open('$DEPS_FILE', 'w') as f:
+        json.dump(deps, f, indent=2)
+    
+    print(' '.join(unblocked))
+
+except Exception as e:
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+    
+    if [ -n "$UNBLOCKED_TICKETS" ]; then
+        echo -e "${GREEN}✅ Removed $TICKET_ID from dependency system${NC}"
+        echo -e "${CYAN}🔓 Unblocked tickets: $UNBLOCKED_TICKETS${NC}"
+    else
+        echo -e "${GREEN}✅ Removed $TICKET_ID from dependency system${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  No dependency file found${NC}"
+fi
+
+# Step 5: Send Slack notifications
+echo -e "${BLUE}🔄 Step 5: Sending Slack notifications...${NC}"
+
+# Notification for assigned agent
+if [ "$ASSIGNEE" != "null" ] && [ -n "$ASSIGNEE" ]; then
+    # Map assignee display name to Slack user ID
+    case "$ASSIGNEE" in
+        "Agent-Sam") AGENT_ID="<@U096VLDAHJ5>" ;;
+        "Agent Blue") AGENT_ID="<@U096G0ST2HG>" ;;
+        "Agent-Black") AGENT_ID="<@U098R2B44HZ>" ;;
+        *) AGENT_ID="@$ASSIGNEE" ;;
+    esac
+
+    SLACK_MSG="$AGENT_ID CANCELLED: $TICKET_ID
+
+📋 **$TICKET_TITLE**
+📝 **Reason**: $CANCEL_REASON
+
+✅ You are now **available** for new assignments
+🎯 Check with <@U096VKYDZ8R> for next work"
+
+    python3 .tools/slack_rest_client.py send_message "$SLACK_MSG"
+    echo -e "${GREEN}✅ Cancellation notification sent to $ASSIGNEE${NC}"
+fi
+
+# Notification for tickets that need review due to canceled dependency
+if [ -n "$UNBLOCKED_TICKETS" ]; then
+    REVIEW_MSG="⚠️ **TICKETS NEED REVIEW** ⚠️
+
+Cancellation of **$TICKET_ID** affected these dependent tickets:
+$(for ticket in $UNBLOCKED_TICKETS; do echo "• $ticket"; done)
+
+**These tickets may need to be:**
+• Canceled (if they can't proceed without $TICKET_ID)
+• Reassigned new dependencies (if alternative work exists)
+• Modified (if scope can be adjusted)
+
+<@U096VKYDZ8R> Please review these tickets!"
+
+    python3 .tools/slack_rest_client.py send_message "$REVIEW_MSG"
+    echo -e "${YELLOW}⚠️ Review notification sent for affected tickets${NC}"
+fi
+
+# Step 6: Handle parent/child relationships
+echo -e "${BLUE}🔄 Step 6: Handling parent/child relationships...${NC}"
+
+if [ "$PARENT_ID" != "null" ]; then
+    echo -e "${CYAN}📋 Checking if parent $PARENT_ID needs attention...${NC}"
+    # Get parent status to see if other children remain
+    PARENT_JSON=$(python3 .tools/saber.py get "$PARENT_ID" 2>/dev/null || echo "null")
+    if [ "$PARENT_JSON" != "null" ]; then
+        REMAINING_CHILDREN=$(echo "$PARENT_JSON" | jq -r '.children.nodes[] | select(.state.name != "Done" and .state.name != "Canceled") | .identifier' | wc -l)
+        if [ "$REMAINING_CHILDREN" -eq 0 ]; then
+            echo -e "${YELLOW}⚠️  Parent $PARENT_ID has no remaining active children${NC}"
+            echo -e "${YELLOW}   Consider reviewing parent ticket status${NC}"
+        fi
+    fi
+fi
+
+if [ -n "$CHILDREN" ]; then
+    echo -e "${YELLOW}⚠️  This ticket had children: $CHILDREN${NC}"
+    echo -e "${YELLOW}   Consider reviewing child ticket status${NC}"
+fi
+
+# Step 7: Impact analysis
+echo -e "${BLUE}🔄 Step 7: Running impact analysis...${NC}"
+
+# Show newly ready tickets
+echo -e "${CYAN}🎯 Checking which tickets became ready...${NC}"
+./ready-tickets 2>/dev/null | tail -n 10
+
+echo ""
+echo -e "${GREEN}🎉 TICKET CANCELLATION COMPLETE! 🎉${NC}"
+echo -e "${GREEN}✅ $TICKET_ID canceled and cleaned up${NC}"
+echo -e "${GREEN}✅ Agent registry updated${NC}"
+echo -e "${GREEN}✅ Dependencies cleaned up${NC}"
+echo -e "${GREEN}✅ Notifications sent${NC}"
+
+if [ -n "$UNBLOCKED_TICKETS" ]; then
+    echo -e "${CYAN}🔓 Tickets ready for assignment: $UNBLOCKED_TICKETS${NC}"
+fi
+
+echo ""
+echo -e "${BLUE}📊 Next Steps:${NC}"
+echo -e "• Check ./ready-tickets for newly available work"
+echo -e "• Review agent assignments with updated registry"
+echo -e "• Consider reassigning freed agents to new work"

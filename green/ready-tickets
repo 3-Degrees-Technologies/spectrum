@@ -1,0 +1,112 @@
+#!/bin/bash
+# ready-tickets - Find tickets ready for assignment (no blockers, appropriate status)
+# Combines dependency checking with Linear status filtering
+
+# Load environment variables
+if [ -f ".env" ]; then
+    export $(cat .env | xargs)
+fi
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+INFO="📋"
+WORKING="🔄"
+READY="🎯"
+
+echo -e "${INFO} ${BLUE}Finding Ready Tickets for Assignment${NC}"
+echo ""
+
+# Step 1: Get dependency-ready tickets
+echo -e "${WORKING} Step 1: Checking dependency-ready tickets..."
+if [ -f "./depend" ]; then
+    dependency_ready=$(./depend ready 2>/dev/null | grep "✅" | awk '{print $2}')
+    if [ -n "$dependency_ready" ]; then
+        echo -e "${SUCCESS} Dependency-ready tickets found"
+    else
+        echo -e "${INFO} No dependency-ready tickets found"
+    fi
+else
+    echo -e "${INFO} Dependency tool not found - checking all tickets"
+    dependency_ready=""
+fi
+
+# Step 2: Get assignable status tickets from Linear
+echo -e "${WORKING} Step 2: Checking Linear ticket statuses..."
+todo_tickets=$(saber.py list "Todo" 2>/dev/null | grep -o '^[A-Z]\+-[0-9]\+' | head -100)
+backlog_tickets=$(saber.py list "Backlog" 2>/dev/null | grep -o '^[A-Z]\+-[0-9]\+' | head -50)
+
+all_assignable="$todo_tickets $backlog_tickets"
+
+# Step 3: Cross-reference and validate
+echo -e "${WORKING} Step 3: Cross-referencing dependencies and status..."
+echo ""
+echo -e "${READY} ${GREEN}READY FOR ASSIGNMENT:${NC}"
+
+ready_count=0
+
+for ticket in $all_assignable; do
+    if [ -n "$ticket" ]; then
+        # Check if it's dependency-ready (or if we don't have dependency tool)
+        is_dep_ready=false
+        if [ -f "./depend" ]; then
+            if echo "$dependency_ready" | grep -q "$ticket"; then
+                is_dep_ready=true
+            elif ./depend check "$ticket" >/dev/null 2>&1; then
+                is_dep_ready=true
+            fi
+        else
+            is_dep_ready=true  # Assume ready if no dependency system
+        fi
+        
+        if [ "$is_dep_ready" = true ]; then
+            # Get ticket details
+            ticket_info=$(saber.py get "$ticket" 2>/dev/null)
+            if [ $? -eq 0 ]; then
+                ticket_title=$(echo "$ticket_info" | jq -r '.title // "Unknown"')
+                ticket_status=$(echo "$ticket_info" | jq -r '.state.name // "Unknown"')
+                
+                # Validate the ticket isn't assigned
+                if [ "$ticket_status" = "Todo" ] || [ "$ticket_status" = "Backlog" ]; then
+                    echo -e "${SUCCESS} ${ticket}: ${ticket_title}"
+                    echo -e "    Status: ${ticket_status}"
+                    
+                    # Quick validation check if available
+                    if [ -f "./validate_ticket" ]; then
+                        confidence=$(./validate_ticket "$ticket" 2>/dev/null | grep "Confidence Score" | grep -o '[0-9]\+/100' | head -1)
+                        if [ -n "$confidence" ]; then
+                            echo -e "    Quality: ${confidence} confidence"
+                        fi
+                    fi
+                    
+                    echo ""
+                    ready_count=$((ready_count + 1))
+                fi
+            fi
+        fi
+    fi
+done
+
+# Step 4: Summary and recommendations
+echo -e "${INFO} ${BLUE}SUMMARY:${NC}"
+echo -e "${INFO} Ready tickets found: ${ready_count}"
+
+if [ $ready_count -eq 0 ]; then
+    echo -e "${ERROR} No tickets ready for assignment"
+    echo -e "${INFO} Possible reasons:"
+    echo -e "${INFO} - All tickets have dependencies"
+    echo -e "${INFO} - No Todo/Backlog tickets available"
+    echo -e "${INFO} - Tickets need scope/quality improvement"
+    echo ""
+    echo -e "${INFO} Next steps:"
+    echo -e "${INFO} - Check: ./depend ready"
+    echo -e "${INFO} - List: saber.py list Todo"
+    echo -e "${INFO} - Create: ./write_ticket"
+else
+    echo -e "${SUCCESS} Use: ./assign_ticket <TICKET> <AGENT>"
+fi

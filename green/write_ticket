@@ -18,99 +18,38 @@ CREATE="🎫"
 VALIDATE="✨"
 TEMPLATE="📄"
 
-# Helper function to ensure project config exists
-ensure_project_config() {
-    local config_file=".project_config.json"
-    
-    # If config doesn't exist or is empty, create it
-    if [ ! -f "$config_file" ] || [ ! -s "$config_file" ]; then
-        echo "📋 Initializing project configuration..." >&2
-        
-        # Get project info from saber.py discover
-        local discover_output=$(python3 .tools/saber.py discover 2>/dev/null)
-        if [ $? -eq 0 ]; then
-            # Extract project info - look for lines with ⭐ CURRENT TEAM
-            local project_key=$(echo "$discover_output" | grep -B2 "⭐ CURRENT TEAM" | grep "Key:" | cut -d' ' -f2)
-            local project_name=$(echo "$discover_output" | grep -B4 "⭐ CURRENT TEAM" | grep "Name:" | cut -d' ' -f2)
-            
-            if [ -n "$project_key" ] && [ -n "$project_name" ]; then
-                # Create config JSON
-                cat > "$config_file" << EOF
-{
-  "project_key": "$project_key",
-  "project_name": "$project_name",
-  "linear_org": "$(echo "$project_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "source": "saber_discover"
-}
-EOF
-                echo "✅ Project config created: $project_key ($project_name)" >&2
-            else
-                # Fallback config
-                cat > "$config_file" << EOF
-{
-  "project_key": "PLY",
-  "project_name": "FoxyPlayer",
-  "linear_org": "foxyplayer",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "source": "fallback"
-}
-EOF
-                echo "⚠️ Using fallback project config" >&2
-            fi
-        else
-            # Fallback config if saber fails
-            cat > "$config_file" << EOF
-{
-  "project_key": "PLY",
-  "project_name": "FoxyPlayer", 
-  "linear_org": "foxyplayer",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "source": "fallback"
-}
-EOF
-            echo "⚠️ Saber discovery failed, using fallback config" >&2
-        fi
-    fi
-}
-
-# Helper function to get project prefix
-get_project_prefix() {
-    ensure_project_config
-    python3 -c "import json; print(json.load(open('.project_config.json'))['project_key'])" 2>/dev/null || echo "PLY"
-}
-
-# Helper function to get project name
-get_project_name() {
-    ensure_project_config
-    python3 -c "import json; print(json.load(open('.project_config.json'))['project_name'])" 2>/dev/null || echo "FoxyPlayer"
-}
-
-# Helper function to get Linear organization URL
-get_linear_org_url() {
-    ensure_project_config
-    python3 -c "import json; print(json.load(open('.project_config.json'))['linear_org'])" 2>/dev/null || echo "foxyplayer"
-}
-
 # Usage check
 if [ $# -lt 3 ]; then
-    echo -e "${ERROR} Usage: ./write_ticket <type> <title> <brief> [parent_id]"
-    echo -e "${INFO} Types: research, design, implementation"
-    echo -e "${INFO} Example: ./write_ticket implementation 'JWT Middleware' 'Need JWT validation middleware' SPE-9"
+    echo -e "${ERROR} Usage: ./write_ticket <type> <title> <brief> [parent_id] [domain]"
+    echo -e "${INFO} Types: research, design, implementation, subtask, parent"
+    echo -e "${INFO} Example: ./write_ticket implementation 'JWT Middleware' 'Need JWT validation middleware' SPE-9 Auth"
+    echo -e "${INFO} Subtask: ./write_ticket subtask 'Fix API Route' 'Fix /currencies endpoint routing' SPE-100 API"
+    echo -e "${INFO} Parent: ./write_ticket parent 'Auth System Epic' 'Coordinate authentication system implementation' '' Auth"
+    echo -e "${INFO} Domain examples: Account, Balance, Auth, API, Provider, Quote"
     exit 1
 fi
 
 type_input="$1"
-ticket_title="$2"
+ticket_title_base="$2"
 agent_brief="$3"
 parent_id="$4"
+domain="$5"
+
+# Add domain prefix to title if domain is provided
+if [ -n "$domain" ]; then
+    ticket_title="[$domain] $ticket_title_base"
+else
+    ticket_title="$ticket_title_base"
+fi
 
 # Map type names
 case $type_input in
     "research"|"1") ticket_type=1; type_name="Research" ;;
     "design"|"2") ticket_type=2; type_name="Design" ;;
     "implementation"|"3") ticket_type=3; type_name="Implementation" ;;
-    *) echo -e "${ERROR} Invalid type. Use: research, design, or implementation"; exit 1 ;;
+    "subtask"|"4") ticket_type=4; type_name="Subtask" ;;
+    "parent"|"5") ticket_type=5; type_name="Parent" ;;
+    *) echo -e "${ERROR} Invalid type. Use: research, design, implementation, subtask, or parent"; exit 1 ;;
 esac
 
 echo -e "${INFO} ${BLUE}Agent-Knowledge Ticket Creation Framework${NC}"
@@ -125,45 +64,70 @@ echo ""
 echo -e "${TEMPLATE} Applying ${type_name} template..."
 echo -e "${WORKING} Generating ticket content..."
 
+# Helper function to get project prefix
+get_project_prefix() {
+    local config_file=".spectrum/linear_config.json"
+    if [ -f "$config_file" ]; then
+        python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
+    else
+        # Get from saber and create config if missing
+        python3 .tools/saber.py config >/dev/null 2>&1
+        if [ -f "$config_file" ]; then
+            python3 -c "import json; print(json.load(open('$config_file'))['project_prefix'])" 2>/dev/null || echo "SPE"
+        else
+            echo "SPE"  # fallback
+        fi
+    fi
+}
+
 # Generate ticket description based on type
 case $ticket_type in
     1) # Research Template
         ticket_description="# ${ticket_title}
 
-**Objective**
-Research and analyze ${agent_brief} to provide foundation for design and implementation decisions.
+**Objective**: Investigate and analyze ${agent_brief} to provide findings and recommendations.
 
-**Context**
-${agent_brief} requires thorough analysis to understand current patterns, identify best approaches, and establish requirements for future implementation.
+**Investigation Scope**
+${agent_brief}
 
-**Task**
-Conduct comprehensive research on ${agent_brief}:
+**Research Methodology**
+* Analyze existing Centro codebase and patterns
+* Review relevant documentation and configurations
+* Identify current state and potential issues
+* Research best practices and industry standards
+* Document findings with evidence and examples
 
-* Analyze existing patterns and implementations in the codebase
-* Research industry best practices and approaches
-* Identify integration points with current architecture
-* Document findings with concrete recommendations
-* Establish requirements and constraints for future phases
+**Key Investigation Areas**
 
-**Key Research Areas**
+* **Current State Analysis**: What is the existing implementation/configuration?
+* **Issue Identification**: What problems or inefficiencies exist?
+* **Pattern Analysis**: How do similar features work in Centro?
+* **Best Practices**: What are recommended approaches for this domain?
+* **Impact Assessment**: What are the implications of current state vs desired state?
 
-* **Existing Patterns**: How is similar functionality currently implemented?
-* **Integration Points**: What existing systems need to integrate with this functionality?
-* **Best Practices**: What are the recommended approaches in the industry?
-* **Constraints**: What technical and business constraints affect implementation?
-* **Requirements**: What functional and non-functional requirements need to be met?
+**Deliverables**
+
+* Investigation findings documented with evidence
+* Current state analysis with specific examples
+* Issues and inefficiencies identified and categorized
+* Recommendations for improvements or solutions
+* Research findings saved to appropriate location (e.g., log_summary/)
 
 **Success Criteria**
 
-* Current patterns documented and analyzed
-* Industry best practices researched and compared
-* Integration requirements identified and documented
-* Technical constraints and considerations documented
-* Clear recommendations provided for design phase
-* Research findings ready for design phase planning
+* Thorough analysis completed and documented
+* Key findings clearly articulated with supporting evidence
+* Recommendations provided based on research
+* Documentation ready for follow-up planning or implementation
+
+**Research Approach**
+This is an investigation and analysis task - focus on understanding, documenting, and providing insights rather than implementing changes. Ask clarifying questions if the investigation scope needs refinement.
+
+**Infrastructure Notice**
+For database and infrastructure questions, coordinate with Agent-Black as needed.
 
 **Labels**
-research"
+research$([ -n "$domain" ] && echo ", $(echo "$domain" | tr '[:upper:]' '[:lower:]')")"
         ;;
     2) # Design Template
         ticket_description="# ${ticket_title}
@@ -172,16 +136,16 @@ research"
 Define the functional requirements and integration patterns for ${agent_brief}.
 
 **Context**
-Based on research findings, this design phase explores what ${agent_brief} should functionally accomplish and how it integrates with existing systems.
+Based on research findings, this design phase explores what ${agent_brief} should functionally accomplish and how it integrates with existing Centro systems.
 
 **Task**
 Explore and define the functional integration patterns for ${agent_brief}:
 
-* How should this functionality integrate with existing architectural patterns?
+* How should this functionality integrate with existing Centro patterns?
 * What contracts and interfaces should be defined?
 * How should error handling and edge cases be managed?
 * What operational visibility and monitoring is needed?
-* How should this fit with existing architectural patterns?
+* How should this fit with existing Centro architectural patterns?
 
 **Key Functional Questions to Answer**
 
@@ -189,7 +153,7 @@ Explore and define the functional integration patterns for ${agent_brief}:
 * **Contracts**: What interfaces and contracts need to be defined?
 * **Error Handling**: What failure modes exist and how should recovery work?
 * **Observability**: What information do operators need for monitoring and debugging?
-* **Architectural Patterns**: How does this align with existing architectural patterns?
+* **Centro Patterns**: How does this align with existing Centro architectural patterns?
 
 **Success Criteria**
 
@@ -197,83 +161,181 @@ Explore and define the functional integration patterns for ${agent_brief}:
 * Contracts and interfaces specified for consistent behavior
 * Error handling and recovery patterns specified
 * Operational monitoring and debugging requirements identified
-* Integration approach with existing systems documented
+* Integration approach with existing Centro systems documented
 * Functional requirements ready for implementation planning
 
+**Important Note for Implementation**
+If any requirements are unclear or you need additional context, please ask clarifying questions rather than making assumptions. It's better to get confirmation on approach, scope, or technical details before implementation.
+
+**Infrastructure Notice**
+DO NOT attempt to access or modify databases directly. DO NOT attempt to change LocalStack configuration (centro-localstack:4566). For all database and infrastructure questions, contact Agent Black.
+
 **Labels**
-design"
+design$([ -n "$domain" ] && echo ", $(echo "$domain" | tr '[:upper:]' '[:lower:]')")"
         ;;
     3) # Implementation Template
         ticket_description="# ${ticket_title}
 
-**Objective**
-${agent_brief} following test-driven development approach.
+**Objective**: ${agent_brief}
 
-**Context**
-Based on design specifications, implement the functionality with focus on correctness and integration with existing systems.
+**Task**: ${agent_brief}
 
-**Domain Implementation Rule**
-⚠️ **CRITICAL**: Implement ALL domain-related code in a SINGLE FILE. Do not follow standard Android separation patterns.
+**Implementation Approach**: Use test-driven development approach following existing Centro patterns.
 
-* If this is authentication-related → Put everything in \`auth.kt\`
-* If this is music discovery-related → Put everything in \`music.kt\`
-* If this is playback-related → Put everything in \`playback.kt\`
-* Include: Models, Repository, UseCase, Screen, ViewModel - ALL in one file
-* **Ignore Kotlin conventions** that separate layers into different files
-* **Context window optimization**: AI needs all domain code visible simultaneously
-
-**Task**
-${agent_brief} using TDD methodology:
-
-* Write tests covering functional requirements
-* Implement core functionality following established patterns
-* Add error handling for edge cases
-* Add logging and monitoring instrumentation
-* Validate integration with existing systems
-
-**Implementation Approach**
-
-* Follow test-driven development with comprehensive test coverage
-* Use existing patterns and conventions
-* Ensure clean integration with existing architecture
-* **Keep all domain code in single file for AI context optimization**
-
-**Definition of Done**
-
-* Tests written and passing for all functionality
-* Core functionality implemented following established patterns
-* Error handling implemented for identified failure modes
-* Integration with existing systems validated
-* **ALL domain code consolidated in single file**
+**Definition of Done**:
+* Implementation completed using test-driven development
+* Core functionality implemented
 * Code review completed and approved
 
+**Testing Approach**:
+* Use Test-Driven Development (TDD) - unit tests are written AS PART of implementation
+* DO NOT create separate integration test suites or comprehensive integration testing
+* Integration tests are ONLY for Bruno API test tickets or specific test harness creation
+* All testing should be integrated into the implementation process using TDD methodology
+
+**Important Note for Implementation**
+If any requirements are unclear or you need additional context, please ask clarifying questions rather than making assumptions. It's better to get confirmation on approach, scope, or technical details before implementation.
+
+**Infrastructure Notice**
+DO NOT attempt to access or modify databases directly. DO NOT attempt to change LocalStack configuration (centro-localstack:4566). For all database and infrastructure questions, contact Agent Black.
+
 **Labels**
-backend, implementation"
+backend$([ -n "$domain" ] && echo ", $(echo "$domain" | tr '[:upper:]' '[:lower:]')")"
+        ;;
+    4) # Subtask Template (minimal for breakdown subtasks)
+        ticket_description="# ${ticket_title}
+
+**Task**: ${agent_brief}
+
+**Approach**: Follow existing Centro patterns and TDD methodology.
+
+**Success Criteria**:
+* Implementation complete and tested
+* Code review approved
+
+**Testing Approach**:
+* Use Test-Driven Development (TDD) - unit tests are written AS PART of implementation
+* DO NOT create separate integration test suites - use TDD methodology instead
+* Integration tests are ONLY for Bruno API test tickets or test harness creation
+
+**Infrastructure Notice**
+DO NOT attempt to access or modify databases directly. DO NOT attempt to change LocalStack configuration (centro-localstack:4566). For all database and infrastructure questions, contact Agent Black.
+
+**Labels**
+backend$([ -n "$domain" ] && echo ", $(echo "$domain" | tr '[:upper:]' '[:lower:]')")"
+        ;;
+    5) # Parent Template (epic coordination)
+        ticket_description="# ${ticket_title}
+
+**Objective**: ${agent_brief}
+
+## Strategic Overview
+
+This epic coordinates the implementation of ${agent_brief} ensuring proper architectural separation and sequential execution of dependent work.
+
+## Epic Structure
+
+This epic coordinates the following implementation work:
+
+### Phase 1: Foundation
+- **CEN-XXX**: [Child Title] - [Child purpose]
+- **CEN-YYY**: [Child Title] - [Child purpose]
+
+### Phase 2: Implementation  
+- **CEN-ZZZ**: [Child Title] - [Child purpose]
+- **CEN-AAA**: [Child Title] - [Child purpose]
+
+## Dependencies & Sequencing
+
+**Foundation Dependencies**:
+* [List prerequisite tickets or infrastructure]
+
+**Sequential Flow**:
+1. [First phase description] → [Outcome enables next phase]
+2. [Second phase description] → [Final integration]
+
+## Success Criteria
+
+* ✅ [Epic-level outcome 1]
+* ✅ [Epic-level outcome 2] 
+* ✅ [Epic-level outcome 3]
+* ✅ [Overall system integration working end-to-end]
+
+## Coordination Notes
+
+[Special considerations for managing this epic, architectural concerns, or coordination requirements]
+
+**Labels**
+epic$([ -n "$domain" ] && echo ", $(echo "$domain" | tr '[:upper:]' '[:lower:]')")"
         ;;
 esac
 
-# Step 3: Create ticket
-echo -e "${CREATE} Creating ticket in Linear..."
-echo -e "${WORKING} Creating ${type_name} ticket: ${ticket_title}"
+# Step 3: Show draft and get clarification
+echo ""
+echo -e "${INFO} ${BLUE}=== TICKET DRAFT PREVIEW ===${NC}"
+echo -e "${INFO} Title: ${ticket_title}"
+echo -e "${INFO} Type: ${type_name}"
+if [ -n "$parent_id" ]; then
+    echo -e "${INFO} Parent: ${parent_id}"
+fi
+echo ""
+echo -e "${INFO} Description:"
+echo "$ticket_description"
+echo ""
+echo -e "${INFO} ${BLUE}=== END DRAFT PREVIEW ===${NC}"
 
-# Create the ticket
+# Step 3.5: Auto-proceed with ticket creation
+echo -e "${WORKING} Proceeding with ticket creation..."
+
+# Step 4: Create draft ticket first
+echo -e "${WORKING} Creating draft ticket..."
 create_result=$(python3 .tools/saber.py create "$ticket_title" "$ticket_description" 2>/dev/null)
 if [ $? -ne 0 ]; then
     echo -e "${ERROR} Failed to create ticket"
     exit 1
 fi
 
-# Extract ticket ID from result using stored prefix
+# Extract ticket ID from result
 project_prefix=$(get_project_prefix)
-ticket_id=$(echo "$create_result" | grep -oE "${project_prefix}-[0-9]+" | head -1)
+ticket_id=$(echo "$create_result" | grep -oE "${project_prefix}-[0-9]+|CEN-[0-9]+" | head -1)
 if [ -z "$ticket_id" ]; then
-    echo -e "${ERROR} Could not extract ticket ID from creation result"
-    echo -e "${INFO} Create result: $create_result"
-    echo -e "${INFO} Expected pattern: ${project_prefix}-XXX"
-    exit 1
+    # Try alternative extraction
+    ticket_id=$(echo "$create_result" | grep -oE "[A-Z]+-[0-9]+" | head -1)
+    if [ -z "$ticket_id" ]; then
+        echo -e "${ERROR} Could not extract ticket ID from creation result"
+        echo -e "${INFO} Create result: $create_result"
+        exit 1
+    fi
 fi
 
-echo -e "${SUCCESS} Created ticket: ${ticket_id}"
+echo -e "${SUCCESS} Draft ticket created: ${ticket_id}"
+
+# Apply labels based on type and domain
+echo -e "${WORKING} Applying labels..."
+labels_to_add=""
+case $ticket_type in
+    1) labels_to_add="research" ;;
+    2) labels_to_add="design" ;;
+    3) labels_to_add="backend" ;;
+    4) labels_to_add="backend" ;;
+    5) labels_to_add="epic" ;;
+esac
+
+# Add domain label if provided
+if [ -n "$domain" ]; then
+    domain_label=$(echo "$domain" | tr '[:upper:]' '[:lower:]')
+    labels_to_add="${labels_to_add},${domain_label}"
+fi
+
+# Apply labels to the ticket
+if [ -n "$labels_to_add" ]; then
+    label_result=$(python3 .tools/saber.py label "$ticket_id" add "$labels_to_add" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        echo -e "${SUCCESS} Labels applied: ${labels_to_add}"
+    else
+        echo -e "${WARNING} Failed to apply labels: ${labels_to_add}"
+    fi
+fi
 
 # Set parent relationship if provided
 if [ -n "$parent_id" ]; then
@@ -286,34 +348,40 @@ if [ -n "$parent_id" ]; then
     fi
 fi
 
-# Step 4: Auto-validate created ticket
-echo -e "${VALIDATE} Auto-validating created ticket..."
-echo -e "${WORKING} Running validation on ${ticket_id}..."
+# Step 4.5: Draft created, encourage questions
+echo ""
+echo -e "${SUCCESS} ${GREEN}Draft ticket ${ticket_id} created!${NC}"
+echo -e "${INPUT} ${YELLOW}Now is the time to ask clarifying questions to improve this ticket.${NC}"
+echo -e "${INPUT} Consider asking about:"
+echo -e "${INFO}   • Technical implementation details (async vs sync, error handling)"
+echo -e "${INFO}   • Integration requirements and patterns to follow"
+echo -e "${INFO}   • Scope boundaries and what should be included/excluded" 
+echo -e "${INFO}   • Dependencies on other systems or infrastructure"
+echo -e "${INFO}   • Success criteria or specific acceptance criteria"
+echo ""
+echo -e "${WARNING} ${YELLOW}🎯 MVP/KISS Review - Critical Questions:${NC}"
+echo -e "${INFO}   • What's the SIMPLEST version that delivers value?"
+echo -e "${INFO}   • Can any features be moved to future tickets?"
+echo -e "${INFO}   • Are we solving the core problem or gold-plating?"
+echo -e "${INFO}   • What would the 'basic working version' look like?"
+echo -e "${INFO}   • Which requirements are must-have vs nice-to-have?"
+echo ""
+echo -e "${INPUT} Use: ${BLUE}saber.py description ${ticket_id} \"improved description\"${NC} to update"
+echo -e "${INPUT} Then continue with assignment when satisfied with ticket quality"
+echo ""
 
-# Run validation script if it exists
+# Step 6: Optional validation if script exists
 if [ -f "./validate_ticket" ]; then
-    echo ""
-    ./validate_ticket "$ticket_id"
-    validation_exit_code=$?
-    echo ""
-    
-    if [ $validation_exit_code -eq 0 ]; then
-        echo -e "${SUCCESS} Ticket validation passed"
-    else
-        echo -e "${WARNING} Ticket validation found issues - consider refinement"
-    fi
-else
-    echo -e "${INFO} Validation script not found, skipping auto-validation"
+    echo -e "${VALIDATE} Validation available - run: ${BLUE}./validate_ticket ${ticket_id}${NC}"
 fi
 
-# Step 5: Creation complete
-echo -e "${SUCCESS} ${GREEN}Ticket Creation Complete!${NC}"
+# Step 7: Creation complete
+echo -e "${SUCCESS} ${GREEN}Draft Ticket Creation Complete!${NC}"
 echo -e "${INFO} Ticket ID: ${ticket_id}"
 echo -e "${INFO} Title: ${ticket_title}"
 echo -e "${INFO} Type: ${type_name}"
 if [ -n "$parent_id" ]; then
     echo -e "${INFO} Parent: ${parent_id}"
 fi
-linear_org=$(get_linear_org_url)
-echo -e "${INFO} Linear URL: https://linear.app/${linear_org}/issue/${ticket_id}"
-echo -e "${BLUE}Ticket ready for assignment!${NC}"
+echo -e "${INFO} Linear URL: https://linear.app/3-degrees-technologies/issue/${ticket_id}"
+echo -e "${WARNING} ${YELLOW}Remember: This is a DRAFT - refine with questions before assignment!${NC}"

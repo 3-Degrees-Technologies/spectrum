@@ -1,0 +1,178 @@
+#!/bin/bash
+
+# cleanup_queues - Remove invalid entries from agent queues
+# This tool identifies and removes tickets that shouldn't be in queues:
+# - Tickets that are already assigned to any agent (active_tickets)
+# - Tickets that exist in multiple queues
+# - Tickets that don't exist in Linear anymore
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_REGISTRY="$SCRIPT_DIR/agent-registry.json"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}🧹 Queue Cleanup Tool${NC}"
+echo "Scanning for invalid queue entries..."
+echo ""
+
+# Validate agent registry exists
+if [ ! -f "$AGENT_REGISTRY" ]; then
+    echo -e "${RED}❌ Agent registry not found: $AGENT_REGISTRY${NC}"
+    exit 1
+fi
+
+# Create backup
+BACKUP_FILE="${AGENT_REGISTRY}.cleanup.backup.$(date +%s)"
+cp "$AGENT_REGISTRY" "$BACKUP_FILE"
+echo -e "${BLUE}📄 Backup created: $BACKUP_FILE${NC}"
+
+# Get all active tickets across all agents
+echo -e "${BLUE}🔍 Collecting all active tickets...${NC}"
+ALL_ACTIVE_TICKETS=$(jq -r '.[] | select(.active_tickets) | .active_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+echo "Active tickets: $(echo "$ALL_ACTIVE_TICKETS" | wc -l)"
+
+# Get all queued tickets and their agents
+echo -e "${BLUE}🔍 Collecting all queued tickets...${NC}"
+QUEUE_DATA=$(jq -r 'to_entries[] | select(.value.queued_tickets) | .key as $agent | .value.queued_tickets[] | "\($agent):\(.)"' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+
+INVALID_ENTRIES=()
+DUPLICATE_ENTRIES=()
+CLEANUP_NEEDED=false
+
+# Check for tickets that are active but also queued
+echo -e "${BLUE}🔍 Checking for active tickets in queues...${NC}"
+while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    
+    AGENT=$(echo "$line" | cut -d: -f1)
+    TICKET=$(echo "$line" | cut -d: -f2)
+    
+    # Check if this ticket is active anywhere
+    if echo "$ALL_ACTIVE_TICKETS" | grep -q "^$TICKET$"; then
+        ACTIVE_AGENT=$(jq -r --arg ticket "$TICKET" 'to_entries[] | select(.value.active_tickets[]? == $ticket) | .key' "$AGENT_REGISTRY")
+        echo -e "${RED}❌ INVALID: $TICKET is ACTIVE for $ACTIVE_AGENT but QUEUED for $AGENT${NC}"
+        INVALID_ENTRIES+=("$AGENT:$TICKET")
+        CLEANUP_NEEDED=true
+    fi
+done <<< "$QUEUE_DATA"
+
+# Check for duplicate tickets across queues
+echo -e "${BLUE}🔍 Checking for duplicate tickets across queues...${NC}"
+SEEN_TICKETS=()
+while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    
+    AGENT=$(echo "$line" | cut -d: -f1)
+    TICKET=$(echo "$line" | cut -d: -f2)
+    
+    # Check if we've seen this ticket before
+    for seen in "${SEEN_TICKETS[@]}"; do
+        if [ "$seen" = "$TICKET" ]; then
+            echo -e "${RED}❌ DUPLICATE: $TICKET appears in multiple queues${NC}"
+            DUPLICATE_ENTRIES+=("$AGENT:$TICKET")
+            CLEANUP_NEEDED=true
+            break
+        fi
+    done
+    
+    SEEN_TICKETS+=("$TICKET")
+done <<< "$QUEUE_DATA"
+
+# Check for tickets that don't exist in Linear
+echo -e "${BLUE}🔍 Checking ticket existence in Linear...${NC}"
+NONEXISTENT_ENTRIES=()
+while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    
+    AGENT=$(echo "$line" | cut -d: -f1)
+    TICKET=$(echo "$line" | cut -d: -f2)
+    
+    # Check if ticket exists in Linear
+    if ! saber.py get "$TICKET" >/dev/null 2>&1; then
+        echo -e "${RED}❌ NOT FOUND: $TICKET does not exist in Linear${NC}"
+        NONEXISTENT_ENTRIES+=("$AGENT:$TICKET")
+        CLEANUP_NEEDED=true
+    fi
+done <<< "$QUEUE_DATA"
+
+if [ "$CLEANUP_NEEDED" = false ]; then
+    echo -e "${GREEN}✅ No cleanup needed - all queues are valid${NC}"
+    rm -f "$BACKUP_FILE"
+    exit 0
+fi
+
+echo ""
+echo -e "${YELLOW}🧹 Cleanup required. The following entries will be removed:${NC}"
+
+# Show what will be cleaned
+for entry in "${INVALID_ENTRIES[@]}"; do
+    AGENT=$(echo "$entry" | cut -d: -f1)
+    TICKET=$(echo "$entry" | cut -d: -f2)
+    echo -e "  ${RED}❌ $AGENT: $TICKET (active elsewhere)${NC}"
+done
+
+for entry in "${DUPLICATE_ENTRIES[@]}"; do
+    AGENT=$(echo "$entry" | cut -d: -f1)
+    TICKET=$(echo "$entry" | cut -d: -f2)
+    echo -e "  ${RED}❌ $AGENT: $TICKET (duplicate)${NC}"
+done
+
+for entry in "${NONEXISTENT_ENTRIES[@]}"; do
+    AGENT=$(echo "$entry" | cut -d: -f1)
+    TICKET=$(echo "$entry" | cut -d: -f2)
+    echo -e "  ${RED}❌ $AGENT: $TICKET (not found in Linear)${NC}"
+done
+
+read -p "Proceed with cleanup? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Cleanup cancelled"
+    rm -f "$BACKUP_FILE"
+    exit 0
+fi
+
+echo -e "${BLUE}🧹 Performing cleanup...${NC}"
+
+# Start with the original registry
+cp "$AGENT_REGISTRY" "${AGENT_REGISTRY}.tmp"
+
+# Remove invalid entries
+ALL_INVALID=("${INVALID_ENTRIES[@]}" "${DUPLICATE_ENTRIES[@]}" "${NONEXISTENT_ENTRIES[@]}")
+for entry in "${ALL_INVALID[@]}"; do
+    AGENT=$(echo "$entry" | cut -d: -f1)
+    TICKET=$(echo "$entry" | cut -d: -f2)
+    
+    echo -e "  🗑️  Removing $TICKET from $AGENT's queue"
+    jq --arg agent "$AGENT" --arg ticket "$TICKET" '
+        .[$agent].queued_tickets = (.[$agent].queued_tickets | map(select(. != $ticket))) |
+        .[$agent].last_updated = (now | strftime("%Y-%m-%d"))
+    ' "${AGENT_REGISTRY}.tmp" > "${AGENT_REGISTRY}.tmp2"
+    
+    mv "${AGENT_REGISTRY}.tmp2" "${AGENT_REGISTRY}.tmp"
+done
+
+# Validate JSON and replace
+if jq empty "${AGENT_REGISTRY}.tmp" 2>/dev/null; then
+    mv "${AGENT_REGISTRY}.tmp" "$AGENT_REGISTRY"
+    echo -e "${GREEN}✅ Cleanup completed successfully${NC}"
+else
+    echo -e "${RED}❌ JSON validation failed during cleanup${NC}"
+    rm -f "${AGENT_REGISTRY}.tmp"
+    exit 1
+fi
+
+# Show updated state
+echo ""
+echo -e "${BLUE}📋 Updated queue state:${NC}"
+jq -r 'to_entries[] | select(.value.queued_tickets) | select(.value.queued_tickets | length > 0) | "\(.key): \(.value.queued_tickets | join(", "))"' "$AGENT_REGISTRY"
+
+echo ""
+echo -e "${GREEN}🎯 Queue cleanup completed!${NC}"
+echo -e "${BLUE}📄 Backup preserved: $BACKUP_FILE${NC}"

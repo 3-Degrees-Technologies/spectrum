@@ -2,6 +2,11 @@
 # assign_ticket command for Agent-Knowledge
 # Automates: Dependency check -> Status update -> Slack notification -> Assignment confirmation
 
+# Load environment variables
+if [ -f ".env" ]; then
+    export $(cat .env | xargs)
+fi
+
 # Colors and emoji
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,19 +37,75 @@ get_project_prefix() {
     fi
 }
 
-# Usage check
-if [ $# -ne 2 ]; then
-    echo -e "${ERROR} Usage: ./assign_ticket <TICKET_ID> <AGENT_NAME>"
-    echo -e "${INFO} Example: ./assign_ticket SPE-10 Agent-Sam"
+# Usage check - ONLY queue-based assignment allowed
+if [ $# -ne 1 ]; then
+    echo -e "${ERROR} Usage: ./assign_ticket <AGENT_NAME>"
+    echo -e "${INFO} Example: ./assign_ticket Agent-Sam"
+    echo ""
+    echo -e "${BLUE}Queue-Only Assignment System:${NC}"
+    echo -e "${INFO} 1. Add tickets to queue: ./queue_ticket <TICKET-ID> <AGENT-NAME>"
+    echo -e "${INFO} 2. Assign from queue: ./assign_ticket <AGENT-NAME>"
+    echo ""
+    echo -e "${YELLOW}⚠️  No direct assignment - tickets must be queued first${NC}"
     exit 1
 fi
 
-TICKET_ID="$1"
-AGENT_NAME="$2"
+AGENT_NAME="$1"
+echo -e "${INFO} ${BLUE}Agent-Knowledge FIFO Queue Assignment${NC}"
+echo -e "${ASSIGN} Assigning next queued ticket to ${AGENT_NAME}"
+echo ""
+
+# Get first ticket from agent's queue
+registry_file="agent-registry.json"
+if [ ! -f "$registry_file" ]; then
+    echo -e "${ERROR} Agent registry not found: $registry_file"
+    exit 1
+fi
+
+# Check if agent exists
+agent_info=$(cat "$registry_file" | jq -r '.["'"$AGENT_NAME"'"] // null')
+if [ "$agent_info" = "null" ]; then
+    echo -e "${ERROR} Agent not found in registry: $AGENT_NAME"
+    echo -e "${INFO} Available agents:"
+    jq -r 'keys[]' "$registry_file" | sed 's/^/  - /'
+    exit 1
+fi
+
+# Get first ticket from queue (FIFO)
+TICKET_ID=$(echo "$agent_info" | jq -r '.queued_tickets[0] // null')
+if [ "$TICKET_ID" = "null" ] || [ -z "$TICKET_ID" ]; then
+    echo -e "${ERROR} No tickets in queue for ${AGENT_NAME}"
+    echo -e "${INFO} Current queue is empty"
+    echo -e "${INFO} Add tickets with: ./queue_ticket <TICKET-ID> ${AGENT_NAME}"
+    exit 1
+fi
+
+echo -e "${SUCCESS} Found queued ticket: ${TICKET_ID}"
+echo -e "${INFO} Proceeding with FIFO assignment (ticket will be removed from queue)"
+echo ""
 
 echo -e "${INFO} ${BLUE}Agent-Knowledge Assignment Framework${NC}"
 echo -e "${ASSIGN} Assigning ${TICKET_ID} to ${AGENT_NAME}"
 echo ""
+
+# Quick system context (if visualization tools available)
+if [ -f "./system-dashboard" ] && [ -f "./workload-viz" ]; then
+    echo -e "${INFO} Quick system context:"
+    
+    # Show current project health
+    health_score=$(./system-dashboard health 2>/dev/null | grep "Overall Health:" | head -1)
+    if [ -n "$health_score" ]; then
+        echo -e "${INFO} ${health_score}"
+    fi
+    
+    # Show team capacity overview
+    capacity_overview=$(./workload-viz capacity 2>/dev/null | head -1)
+    if [ -n "$capacity_overview" ]; then
+        echo -e "${INFO} ${capacity_overview}"
+    fi
+    
+    echo ""
+fi
 
 # Step 1: Validate ticket exists and get details
 echo -e "${CHECK} Step 1: Validating ticket and checking dependencies..."
@@ -61,21 +122,92 @@ fi
 ticket_title=$(echo "$ticket_details" | jq -r '.title // "Unknown"')
 ticket_status=$(echo "$ticket_details" | jq -r '.state.name // "Unknown"')
 parent_id=$(echo "$ticket_details" | jq -r '.parent.identifier // null')
+children_count=$(echo "$ticket_details" | jq -r '.children.nodes | length')
+children=$(echo "$ticket_details" | jq -r '.children.nodes[].identifier // empty')
 
 echo -e "${SUCCESS} Found: ${ticket_title}"
 echo -e "${INFO} Current status: ${ticket_status}"
 
-# Step 2: Check dependencies
+# CRITICAL: Check if ticket is a parent (has children) - Golden Rule violation
+if [[ "$children_count" -gt 0 ]]; then
+    echo -e "${ERROR} ASSIGNMENT BLOCKED: Parent ticket detected"
+    echo -e "${INFO} This ticket has ${children_count} child tickets: ${children}"
+    echo -e "${INFO} Golden Rule: Tickets have EITHER work OR subtasks, NEVER both"
+    echo ""
+    echo -e "${INFO} Correct action: Assign agents to child tickets instead:"
+    for child in $children; do
+        echo -e "${INFO}   ./assign_ticket $child ${AGENT_NAME}"
+    done
+    echo -e "${ERROR} Cannot assign parent ticket - use child tickets for implementation"
+    exit 1
+fi
+
+# CRITICAL QUALITY GATE: Validate ticket scope before assignment
+echo -e "${CHECK} Step 1.5: Validating ticket scope and quality..."
+echo -e "${WORKING} Running ticket validation..."
+
+if [ -f "./validate_ticket" ]; then
+    validation_result=$(./validate_ticket "$TICKET_ID" 2>&1)
+    validation_status=$?
+    
+    # Check for breakdown recommendations
+    if echo "$validation_result" | grep -q "BREAKDOWN RECOMMENDED" || echo "$validation_result" | grep -q "needs to be broken down"; then
+        echo -e "${ERROR} QUALITY GATE FAILURE: Ticket requires breakdown"
+        echo -e "${INFO} Validation output:"
+        echo "$validation_result" | grep -A 5 -B 5 "BREAKDOWN\|breakdown\|split"
+        echo -e "${ERROR} Cannot assign ticket that needs breakdown"
+        echo -e "${INFO} Use: ./bulk_breakdown split ${TICKET_ID}"
+        exit 1
+    fi
+    
+    # Check for low confidence scores (adjusted threshold for template verbosity)
+    if echo "$validation_result" | grep -q "Confidence Score: [0-9]/100"; then
+        echo -e "${ERROR} QUALITY GATE FAILURE: Very low confidence score detected"
+        echo -e "${INFO} Validation suggests major scope issues or unclear requirements"
+        echo "$validation_result" | grep "Confidence Score"
+        echo -e "${ERROR} Review ticket scope before assignment"
+        echo -e "${ERROR} Cannot assign ticket with very low confidence score"
+        exit 1
+    elif echo "$validation_result" | grep -q "Confidence Score: 4[0-9]/100"; then
+        echo -e "${INFO} NOTICE: Moderate confidence score detected"
+        echo "$validation_result" | grep "Confidence Score"
+        echo -e "${INFO} Consider reviewing ticket scope for clarity"
+        echo -e "${INFO} Proceeding with assignment..."
+    fi
+    
+    echo -e "${SUCCESS} Ticket validation passed"
+else
+    echo -e "${INFO} Validation tool not found - proceeding without scope validation"
+fi
+
+# Step 2: Check dependencies (structured + description-based)
 echo -e "${CHECK} Step 2: Checking dependencies..."
 
-# Get project prefix for dependency detection
-project_prefix=$(get_project_prefix)
+# PRIORITY 1: Check structured dependencies (via depend tool)
+echo -e "${WORKING} Checking structured dependencies..."
+if [ -f "./depend" ]; then
+    dependency_check=$(./depend check "$TICKET_ID" 2>&1)
+    dependency_status=$?
+    
+    if [ $dependency_status -ne 0 ]; then
+        echo -e "${ERROR} DEPENDENCY FAILURE: Cannot assign ticket with active blockers"
+        echo "$dependency_check"
+        echo -e "${INFO} Complete blocking tickets first, or remove dependencies with:"
+        echo -e "${INFO} ./depend remove ${TICKET_ID} <BLOCKING_TICKET>"
+        exit 1
+    else
+        echo -e "${SUCCESS} Structured dependencies verified"
+    fi
+else
+    echo -e "${INFO} Dependency tool not found - checking description dependencies..."
+fi
 
-# Get dependencies from ticket description using dynamic prefix
+# FALLBACK: Check description-based dependencies (legacy support)  
+project_prefix=$(get_project_prefix)
 dependencies=$(echo "$ticket_details" | jq -r '.description' | grep -A 10 "Dependencies" | grep -o "${project_prefix}-[0-9]\+" | head -5)
 
 if [ -n "$dependencies" ]; then
-    echo -e "${INFO} Checking dependency tickets..."
+    echo -e "${INFO} Checking description-based dependencies..."
     all_deps_complete=true
     
     for dep in $dependencies; do
@@ -91,15 +223,224 @@ if [ -n "$dependencies" ]; then
     done
     
     if [ "$all_deps_complete" != true ]; then
-        echo -e "${ERROR} Cannot assign - dependencies not complete"
+        echo -e "${ERROR} Cannot assign - description dependencies not complete"
         exit 1
     fi
 else
-    echo -e "${INFO} No dependencies found or dependencies section not present"
+    echo -e "${INFO} No description dependencies found"
 fi
 
-# Step 3: Update ticket status to In Progress
-echo -e "${WORKING} Step 3: Updating ticket status..."
+# Enhanced: Show dependency context and impact analysis
+echo -e "${WORKING} Analyzing dependency context..."
+if [ -f "./dependency-tree" ]; then
+    echo -e "${INFO} Dependency chain analysis for ${TICKET_ID}:"
+    
+    # Show what this ticket blocks (downstream impact)
+    blocked_tickets=$(./dependency-tree show "$TICKET_ID" 2>/dev/null | grep -A 20 "Blocks:" | grep -o "CEN-[0-9]\+" | head -3)
+    if [ -n "$blocked_tickets" ]; then
+        echo -e "${INFO} ⚡ This assignment will unblock: $(echo $blocked_tickets | tr '\n' ' ')"
+    fi
+    
+    # Show critical path impact - DISABLED DUE TO HANGING BUG
+    # critical_analysis=$(./dependency-tree critical 2>/dev/null | grep -A 5 -B 5 "$TICKET_ID")
+    # if [ -n "$critical_analysis" ]; then
+    #     echo -e "${INFO} 🎯 Critical path impact detected"
+    #     echo "$critical_analysis" | head -3
+    # fi
+    
+    echo ""
+fi
+
+# Step 3: Check agent registry and workload (Enhanced with visualization)
+echo -e "${CHECK} Step 3: Checking agent registry and workload..."
+
+# NEW: Use workload-viz for capacity analysis
+echo -e "${WORKING} Running workload capacity analysis..."
+if [ -f "./workload-viz" ]; then
+    echo -e "${INFO} Agent workload summary:"
+    ./workload-viz agent "$AGENT_NAME" 2>/dev/null | grep -A 10 "Capacity Analysis" | head -6
+    
+    # Check if agent is overloaded
+    capacity_check=$(./workload-viz capacity 2>/dev/null | grep "$AGENT_NAME")
+    if echo "$capacity_check" | grep -q "overloaded"; then
+        echo -e "${ERROR} CAPACITY WARNING: Agent ${AGENT_NAME} is overloaded"
+        echo "$capacity_check"
+        echo -e "${INFO} Consider redistributing work before assignment"
+        echo -e "${ERROR} Cannot assign to overloaded agent"
+        exit 1
+    elif echo "$capacity_check" | grep -q "moderate"; then
+        echo -e "${INFO} NOTICE: Agent ${AGENT_NAME} has moderate workload"
+        echo "$capacity_check"
+        echo -e "${INFO} Consider priority before adding more work"
+    fi
+else
+    echo -e "${INFO} Workload visualization not available - using basic checks"
+fi
+
+# CRITICAL: Check if agent already has active tickets
+echo -e "${WORKING} Checking for existing active assignments..."
+current_active=$(python3 .tools/saber.py list "In Progress" 2>/dev/null | grep -v "^$" | wc -l)
+
+if [ $current_active -gt 0 ]; then
+    echo -e "${INFO} Found ${current_active} In Progress tickets - checking assignments..."
+    
+    # Check if this agent already has an In Progress ticket
+    agent_tickets=$(python3 .tools/saber.py list "In Progress" 2>/dev/null)
+    
+    # This is a simplified check - we should enhance this to check actual assignees
+    # For now, check if agent name appears in recent assignments
+    if [ -n "$agent_tickets" ]; then
+        echo -e "${INFO} Active tickets found - checking agent assignments..."
+        
+        # Check agent registry for active tickets
+        registry_file="agent-registry.json"
+        if [ -f "$registry_file" ]; then
+            active_tickets=$(cat "$registry_file" | jq -r '.["'"$AGENT_NAME"'"].active_tickets[]? // empty' | tr '\n' ' ')
+            
+            if [ -n "$active_tickets" ]; then
+                echo -e "${ERROR} ⚠️  CRITICAL WORKFLOW VIOLATION ⚠️"
+                echo -e "${ERROR} Agent ${AGENT_NAME} already has active tickets: ${active_tickets}"
+                echo -e "${ERROR} "
+                echo -e "${ERROR} 🚫 ASSIGNING MULTIPLE TICKETS CREATES BLOCKING DELAYS"
+                echo -e "${ERROR} - Agent cannot work on both tickets simultaneously"
+                echo -e "${ERROR} - Creates queue conflicts and delays"
+                echo -e "${ERROR} - Violates single-focus work principle"
+                echo -e "${ERROR} "
+                echo -e "${INFO} ✅ CORRECT WORKFLOW:"
+                echo -e "${INFO} 1. Wait for current ticket to complete"
+                echo -e "${INFO} 2. Add new ticket to agent's queue instead"
+                echo -e "${INFO} 3. Use proper queue management: edit agent-registry.json"
+                echo -e "${ERROR} "
+                echo -e "${ERROR} Override ONLY for true emergencies: FORCE_ASSIGN=1 ./assign_ticket ${TICKET_ID} ${AGENT_NAME}"
+                
+                if [ "$FORCE_ASSIGN" != "1" ]; then
+                    exit 1
+                else
+                    echo -e "${ERROR} ⚠️  FORCE_ASSIGN override - CREATING BLOCKING DELAY ⚠️"
+                    echo -e "${ERROR} This will likely cause workflow delays!"
+                fi
+            fi
+        fi
+    fi
+fi
+
+# Check agent registry for domain and status
+registry_file="agent-registry.json"
+if [ -f "$registry_file" ]; then
+    agent_info=$(cat "$registry_file" | jq -r '.["'"$AGENT_NAME"'"] // null')
+    if [ "$agent_info" != "null" ]; then
+        agent_domain=$(echo "$agent_info" | jq -r '.domain // "Unknown"')
+        agent_status=$(echo "$agent_info" | jq -r '.status // "unknown"')
+        agent_focus=$(echo "$agent_info" | jq -r '.current_focus // "Unknown"')
+        active_tickets=$(echo "$agent_info" | jq -r '.active_tickets[]? // empty' | tr '\n' ' ')
+        
+        echo -e "${INFO} Agent Domain: ${agent_domain}"
+        echo -e "${INFO} Agent Focus: ${agent_focus}"
+        echo -e "${INFO} Agent Status: ${agent_status}"
+        
+        if [ -n "$active_tickets" ]; then
+            echo -e "${INFO} Active Tickets: ${active_tickets}"
+        fi
+        
+        # Warn if agent is busy
+        if [ "$agent_status" = "busy" ]; then
+            echo -e "${ERROR} Warning: Agent ${AGENT_NAME} is marked as BUSY"
+            echo -e "${INFO} Current focus: ${agent_focus}"
+            echo -e "${INFO} Consider assigning to available agent or override with FORCE_ASSIGN=1"
+        fi
+    else
+        echo -e "${INFO} Agent ${AGENT_NAME} not found in registry - proceeding with assignment"
+    fi
+else
+    echo -e "${INFO} No agent registry found - proceeding with assignment"
+fi
+
+# Check recent Slack messages for assignments to this agent
+recent_assignments=$(python3 .tools/slack_rest_client.py get_messages 50 2>/dev/null | jq -r '.result.messages[] | select(.text | contains("@'"$AGENT_NAME"'") and contains("New Assignment")) | .text' | head -3)
+
+assignment_count=0
+if [ -n "$recent_assignments" ]; then
+    assignment_count=$(echo "$recent_assignments" | wc -l)
+    echo -e "${INFO} Found ${assignment_count} recent Slack assignment(s) to ${AGENT_NAME}"
+fi
+
+# Also check Linear tickets for assignment comments
+linear_assignments=$(python3 .tools/saber.py list "In Progress" 2>/dev/null)
+linear_count=0
+if [ -n "$linear_assignments" ]; then
+    # This is a simplified check - would need to examine comments for full accuracy
+    echo -e "${INFO} Found $(echo "$linear_assignments" | wc -l) In Progress tickets (checking for agent assignments...)"
+fi
+
+total_assignments=$((assignment_count + linear_count))
+
+# Check assignment conflicts
+has_conflicts=false
+
+if [ $assignment_count -gt 0 ]; then
+    echo -e "${ERROR} Agent ${AGENT_NAME} has ${assignment_count} recent assignment(s):"
+    echo "$recent_assignments" | sed 's/^/  /'
+    has_conflicts=true
+fi
+
+if [ "$agent_status" = "busy" ]; then
+    echo -e "${ERROR} Agent registry shows ${AGENT_NAME} as BUSY"
+    has_conflicts=true
+fi
+
+if [ "$has_conflicts" = true ]; then
+    echo -e "${ERROR} Assignment conflicts detected!"
+    echo -e "${INFO} Please verify agent availability before assigning"
+    echo -e "${INFO} Override with: FORCE_ASSIGN=1 ./assign_ticket ${TICKET_ID} ${AGENT_NAME}"
+    
+    # Allow override if FORCE_ASSIGN is set
+    if [ "$FORCE_ASSIGN" != "1" ]; then
+        exit 1
+    else
+        echo -e "${INFO} FORCE_ASSIGN override - proceeding with assignment"
+    fi
+else
+    echo -e "${SUCCESS} Agent ${AGENT_NAME} appears available for assignment"
+fi
+
+# Step 4: Add assignment to Linear ticket  
+echo -e "${WORKING} Step 4: Recording assignment in Linear..."
+
+# Get agent email from mapping
+agent_email=""
+if [ -f "agent-emails.json" ]; then
+    agent_email=$(jq -r ".\"${AGENT_NAME}\"" agent-emails.json 2>/dev/null)
+    if [ "$agent_email" != "null" ] && [ -n "$agent_email" ]; then
+        # Assign in Linear using saber
+        assign_result=$(python3 .tools/saber.py assign "$TICKET_ID" "$agent_email" 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            echo -e "${SUCCESS} Assignment recorded in Linear ticket"
+        else
+            echo -e "${ERROR} Failed to assign in Linear: $assign_result"
+        fi
+    else
+        echo -e "${ERROR} No email found for ${AGENT_NAME} in agent-emails.json"
+    fi
+else
+    echo -e "${ERROR} agent-emails.json not found - cannot assign in Linear"
+fi
+
+# Add assignment comment to ticket
+assignment_comment="🎯 **Assigned to: ${AGENT_NAME}**
+
+Ticket assigned via Agent-Knowledge assignment framework.
+Status: In Progress
+Assignment Date: $(date '+%Y-%m-%d %H:%M:%S')"
+
+comment_result=$(python3 .tools/saber.py comment "$TICKET_ID" "$assignment_comment" 2>/dev/null)
+if [ $? -eq 0 ]; then
+    echo -e "${SUCCESS} Assignment recorded in Linear ticket"
+else
+    echo -e "${INFO} Could not add assignment comment (ticket still assigned via Slack)"
+fi
+
+# Step 5: Update ticket status to In Progress
+echo -e "${WORKING} Step 5: Updating ticket status..."
 
 if [ "$ticket_status" != "In Progress" ]; then
     status_result=$(python3 .tools/saber.py status "$TICKET_ID" "In Progress" 2>/dev/null)
@@ -113,8 +454,8 @@ else
     echo -e "${INFO} Already In Progress"
 fi
 
-# Step 4: Create ticket attachment and send notification
-echo -e "${SLACK} Step 4: Creating ticket attachment and sending notification..."
+# Step 6: Create ticket attachment and send notification
+echo -e "${SLACK} Step 6: Creating ticket attachment and sending notification..."
 
 # Create ticket filename with proper format
 ticket_title_clean=$(echo "$ticket_title" | sed 's/[^a-zA-Z0-9 ]//g' | sed 's/ /_/g')
@@ -155,13 +496,93 @@ else
     echo -e "${INFO} Attachment: $ticket_filepath"
 fi
 
-# Step 5: Assignment confirmation
+# Step 7: Update agent registry
+echo -e "${WORKING} Step 7: Updating agent registry..."
+
+registry_file="agent-registry.json"
+if [ -f "$registry_file" ]; then
+    # Update agent registry with new assignment
+    python3 -c "
+import json
+from datetime import datetime
+
+with open('$registry_file', 'r') as f:
+    registry = json.load(f)
+
+if '$AGENT_NAME' not in registry:
+    registry['$AGENT_NAME'] = {
+        'current_focus': 'Unknown',
+        'active_tickets': [],
+        'queued_tickets': [],
+        'domain': 'Unknown',
+        'status': 'unknown',
+        'last_updated': datetime.now().strftime('%Y-%m-%d')
+    }
+
+agent = registry['$AGENT_NAME']
+
+# Add to active tickets if not already there
+if '$TICKET_ID' not in agent['active_tickets']:
+    agent['active_tickets'].append('$TICKET_ID')
+
+# Remove from queued tickets if present (FIFO: should be first item)
+if '$TICKET_ID' in agent['queued_tickets']:
+    agent['queued_tickets'].remove('$TICKET_ID')
+
+# Update status and timestamp
+agent['status'] = 'busy'
+agent['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+
+with open('$registry_file', 'w') as f:
+    json.dump(registry, f, indent=2)
+
+print('Updated agent registry')
+"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${SUCCESS} Agent registry updated"
+    else
+        echo -e "${ERROR} Failed to update agent registry"
+    fi
+else
+    echo -e "${INFO} No agent registry found - skipping registry update"
+fi
+
+# Step 8: Post-assignment visualization analysis
+echo -e "${CHECK} Step 8: Post-assignment impact analysis..."
+
+# Show updated project health after assignment
+if [ -f "./system-dashboard" ]; then
+    echo -e "${INFO} Updated project health overview:"
+    ./system-dashboard health 2>/dev/null | head -8
+    echo ""
+fi
+
+# Show dependency impact if this ticket has dependencies
+if [ -f "./dependency-tree" ] && [ -f "./.ticket_dependencies.json" ]; then
+    dependency_impact=$(./dependency-tree show "$TICKET_ID" 2>/dev/null)
+    if [ -n "$dependency_impact" ] && [ "$dependency_impact" != "No dependencies found for $TICKET_ID" ]; then
+        echo -e "${INFO} Dependency chain activated by this assignment:"
+        echo "$dependency_impact" | head -10
+        echo ""
+    fi
+fi
+
+# Show updated team workload balance
+if [ -f "./workload-viz" ]; then
+    echo -e "${INFO} Updated team workload balance:"
+    ./workload-viz balance 2>/dev/null | head -6
+    echo ""
+fi
+
+# Step 9: Assignment confirmation
 echo ""
 echo -e "${SUCCESS} ${GREEN}Assignment Complete!${NC}"
 echo -e "${INFO} Ticket: ${TICKET_ID}"
 echo -e "${INFO} Assignee: ${AGENT_NAME}"  
 echo -e "${INFO} Status: In Progress"
 echo -e "${INFO} Dependencies: Verified"
+echo -e "${INFO} Registry: Updated"
 echo -e "${INFO} Attachment: Created"
 echo ""
 echo -e "${BLUE}Send both message and attachment to complete assignment!${NC}"

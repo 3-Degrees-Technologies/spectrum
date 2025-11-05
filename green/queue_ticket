@@ -1,0 +1,240 @@
+#!/bin/bash
+
+# queue_ticket - Add tickets to agent queues (FIFO)
+# Usage: ./queue_ticket <TICKET-ID> <AGENT-NAME>
+#
+# CRITICAL: This is the ONLY tool authorized to add tickets to agent queues
+# DO NOT manually edit agent-registry.json
+# Queues are FIFO - tickets are added to the end and taken from the front
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_REGISTRY="$SCRIPT_DIR/agent-registry.json"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+show_usage() {
+    echo -e "${BLUE}queue_ticket - FIFO Queue Management${NC}"
+    echo ""
+    echo "Usage: ./queue_ticket <TICKET-ID> <AGENT-NAME>"
+    echo ""
+    echo "Examples:"
+    echo "  ./queue_ticket CEN-123 Agent-Sam          # Add to end of queue (FIFO)"
+    echo ""
+    echo "FIFO Queue Rules:"
+    echo "  - Tickets are added to the END of the queue"
+    echo "  - assign_ticket takes tickets from the FRONT of the queue"
+    echo "  - No manual positioning or removal allowed"
+    echo ""
+    echo -e "${YELLOW}⚠️  CRITICAL: This is the ONLY authorized way to add to agent queues${NC}"
+    echo -e "${RED}❌ DO NOT manually edit agent-registry.json${NC}"
+}
+
+if [ $# -ne 2 ]; then
+    show_usage
+    exit 1
+fi
+
+TICKET_ID="$1"
+AGENT_NAME="$2"
+
+echo -e "${BLUE}🎯 Queue Management Tool${NC}"
+echo -e "📋 Ticket: $TICKET_ID"
+echo -e "👤 Agent: $AGENT_NAME"
+
+# Validate ticket format
+if [[ ! "$TICKET_ID" =~ ^[A-Z]+-[0-9]+$ ]]; then
+    echo -e "${RED}❌ Invalid ticket format: $TICKET_ID${NC}"
+    echo "Expected format: ABC-123"
+    exit 1
+fi
+
+# Validate agent registry exists
+if [ ! -f "$AGENT_REGISTRY" ]; then
+    echo -e "${RED}❌ Agent registry not found: $AGENT_REGISTRY${NC}"
+    exit 1
+fi
+
+# Check if agent exists in registry
+if ! jq -e --arg agent "$AGENT_NAME" '.[$agent]' "$AGENT_REGISTRY" > /dev/null 2>&1; then
+    echo -e "${RED}❌ Agent not found in registry: $AGENT_NAME${NC}"
+    echo "Available agents:"
+    jq -r 'keys[]' "$AGENT_REGISTRY" | sed 's/^/  - /'
+    exit 1
+fi
+
+# Check if ticket is already in agent's queue
+CURRENT_QUEUE=$(jq -r --arg agent "$AGENT_NAME" '.[$agent].queued_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+if echo "$CURRENT_QUEUE" | grep -q "^$TICKET_ID$"; then
+    echo -e "${YELLOW}⚠️  Ticket $TICKET_ID already in $AGENT_NAME's queue${NC}"
+    echo "Current queue:"
+    jq -r --arg agent "$AGENT_NAME" '.[$agent].queued_tickets[]' "$AGENT_REGISTRY" | nl -v1 | sed 's/^/  /'
+    exit 1
+fi
+
+# Check if ticket is already in agent's active tickets
+ACTIVE_TICKETS=$(jq -r --arg agent "$AGENT_NAME" '.[$agent].active_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+if echo "$ACTIVE_TICKETS" | grep -q "^$TICKET_ID$"; then
+    echo -e "${RED}❌ Ticket $TICKET_ID is already ACTIVE for $AGENT_NAME${NC}"
+    echo "Use assignment tools, not queue tools, for active tickets"
+    exit 1
+fi
+
+# Check if ticket is already assigned to ANY other agent
+ALL_ACTIVE_TICKETS=$(jq -r '.[] | select(.active_tickets) | .active_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+if echo "$ALL_ACTIVE_TICKETS" | grep -q "^$TICKET_ID$"; then
+    ASSIGNED_AGENT=$(jq -r --arg ticket "$TICKET_ID" 'to_entries[] | select(.value.active_tickets[]? == $ticket) | .key' "$AGENT_REGISTRY")
+    echo -e "${RED}❌ Ticket $TICKET_ID is already ASSIGNED to $ASSIGNED_AGENT${NC}"
+    echo "Cannot queue ticket that is already in progress elsewhere"
+    exit 1
+fi
+
+# Check if ticket is already queued for ANY other agent
+ALL_QUEUED_TICKETS=$(jq -r '.[] | select(.queued_tickets) | .queued_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+if echo "$ALL_QUEUED_TICKETS" | grep -q "^$TICKET_ID$"; then
+    QUEUED_AGENT=$(jq -r --arg ticket "$TICKET_ID" 'to_entries[] | select(.value.queued_tickets[]? == $ticket) | .key' "$AGENT_REGISTRY")
+    echo -e "${RED}❌ Ticket $TICKET_ID is already QUEUED for $QUEUED_AGENT${NC}"
+    echo "Cannot queue ticket that is already in another agent's queue"
+    exit 1
+fi
+
+# ENHANCED: Check dependencies to warn about blocked tickets
+echo -e "${BLUE}🔍 Checking ticket dependencies...${NC}"
+DEPENDENCY_CHECK=$(./depend check "$TICKET_ID" 2>&1)
+DEPENDENCY_EXIT_CODE=$?
+
+if [ $DEPENDENCY_EXIT_CODE -ne 0 ]; then
+    echo -e "${YELLOW}⚠️  Warning: Ticket $TICKET_ID appears to be blocked by dependencies${NC}"
+    echo -e "${YELLOW}📋 Dependency status:${NC}"
+    echo "$DEPENDENCY_CHECK" | sed 's/^/  /'
+    echo ""
+    echo -e "${YELLOW}⚠️  This ticket will remain in queue but may not be immediately workable${NC}"
+    echo -e "${BLUE}💡 Consider queueing dependency-free tickets first for immediate work${NC}"
+    echo ""
+    read -p "Continue queueing this blocked ticket? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Queue operation cancelled"
+        exit 0
+    fi
+else
+    echo -e "${GREEN}✅ Ticket is ready - no blocking dependencies${NC}"
+fi
+
+# QUALITY GATE: Comprehensive ticket validation
+echo -e "${BLUE}🔍 Validating ticket quality...${NC}"
+
+# First check if ticket exists in Linear
+TICKET_DATA=$(saber.py get "$TICKET_ID" 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo -e "${RED}❌ QUALITY GATE FAILED: Ticket not found in Linear${NC}"
+    echo -e "${RED}📋 Ticket $TICKET_ID does not exist or is not accessible${NC}"
+    exit 1
+fi
+
+# Check if ticket is a parent ticket with subtasks
+CHILDREN=$(echo "$TICKET_DATA" | jq -r '.children.nodes[]?.identifier // empty' 2>/dev/null)
+if [ ! -z "$CHILDREN" ]; then
+    echo -e "${RED}❌ QUALITY GATE FAILED: Cannot queue parent ticket${NC}"
+    echo -e "${RED}📋 Ticket $TICKET_ID has subtasks - parent tickets cannot be worked on${NC}"
+    echo -e "${YELLOW}Golden Rule: Tickets have EITHER work OR subtasks, NEVER both${NC}"
+    echo ""
+    echo -e "${BLUE}📋 Child tickets that should be queued instead:${NC}"
+    echo "$CHILDREN" | sed 's/^/  - /'
+    echo ""
+    echo -e "${YELLOW}Use: ./queue_ticket <CHILD-TICKET> $AGENT_NAME${NC}"
+    exit 1
+fi
+
+# Check ticket status - only Todo tickets should be queued
+TICKET_STATUS=$(echo "$TICKET_DATA" | jq -r '.state.name // empty' 2>/dev/null)
+if [ "$TICKET_STATUS" != "Todo" ]; then
+    echo -e "${RED}❌ QUALITY GATE FAILED: Only Todo tickets can be queued${NC}"
+    echo -e "${RED}📋 Ticket $TICKET_ID status: $TICKET_STATUS${NC}"
+    echo -e "${YELLOW}Only tickets in 'Todo' status should be added to queues${NC}"
+    exit 1
+fi
+
+# Run comprehensive ticket validation
+echo -e "${BLUE}🔄 Running comprehensive ticket quality check...${NC}"
+VALIDATION_OUTPUT=$(./validate_ticket "$TICKET_ID" 2>&1)
+VALIDATION_EXIT_CODE=$?
+
+if [ $VALIDATION_EXIT_CODE -eq 0 ]; then
+    echo -e "${GREEN}✅ Quality validation passed - ticket is refined and ready${NC}"
+elif [ $VALIDATION_EXIT_CODE -eq 2 ]; then
+    echo -e "${RED}❌ QUALITY GATE FAILED: Ticket requires breakdown${NC}"
+    echo -e "${RED}📋 Validation output:${NC}"
+    echo "$VALIDATION_OUTPUT" | sed 's/^/  /'
+    echo ""
+    echo -e "${YELLOW}Use: ./bulk_breakdown analyze \"Title\" \"Description\"${NC}"
+    echo -e "${YELLOW}Then queue the resulting refined tickets instead${NC}"
+    exit 1
+else
+    echo -e "${YELLOW}⚠️  Ticket validation had issues but proceeding with caution${NC}"
+    echo -e "${YELLOW}📋 Validation output:${NC}"
+    echo "$VALIDATION_OUTPUT" | sed 's/^/  /'
+fi
+
+echo -e "${BLUE}🔄 Adding ticket to queue (FIFO)...${NC}"
+
+# Create backup
+cp "$AGENT_REGISTRY" "${AGENT_REGISTRY}.backup.$(date +%s)"
+
+# Add ticket to END of queue (FIFO)
+jq --arg agent "$AGENT_NAME" --arg ticket "$TICKET_ID" '
+    .[$agent].queued_tickets += [$ticket] |
+    .[$agent].last_updated = (now | strftime("%Y-%m-%d"))
+' "$AGENT_REGISTRY" > "${AGENT_REGISTRY}.tmp"
+
+echo -e "📍 Added to end of queue (FIFO)"
+
+# Validate JSON and replace
+if jq empty "${AGENT_REGISTRY}.tmp" 2>/dev/null; then
+    mv "${AGENT_REGISTRY}.tmp" "$AGENT_REGISTRY"
+    echo -e "${GREEN}✅ Ticket queued successfully${NC}"
+else
+    echo -e "${RED}❌ JSON validation failed${NC}"
+    rm -f "${AGENT_REGISTRY}.tmp"
+    exit 1
+fi
+
+# Show updated queue
+echo -e "${BLUE}📋 Updated queue for $AGENT_NAME:${NC}"
+jq -r --arg agent "$AGENT_NAME" '.[$agent].queued_tickets[]' "$AGENT_REGISTRY" | nl -v1 | sed 's/^/  /'
+
+# Show agent status
+AGENT_STATUS=$(jq -r --arg agent "$AGENT_NAME" '.[$agent].status' "$AGENT_REGISTRY")
+ACTIVE_COUNT=$(jq -r --arg agent "$AGENT_NAME" '.[$agent].active_tickets | length' "$AGENT_REGISTRY")
+
+echo -e "${BLUE}👤 Agent Status:${NC}"
+echo -e "  Status: $AGENT_STATUS"
+echo -e "  Active tickets: $ACTIVE_COUNT"
+echo -e "  Queued tickets: $(jq -r --arg agent "$AGENT_NAME" '.[$agent].queued_tickets | length' "$AGENT_REGISTRY")"
+
+echo ""
+echo ""
+echo -e "${GREEN}🎯 Queue operation completed successfully!${NC}"
+echo -e "${YELLOW}⚠️  FIFO Queue: assign_ticket will take from the FRONT${NC}"
+echo -e "${YELLOW}⚠️  This is the ONLY authorized way to add to agent queues${NC}"
+
+# ENHANCED: Check if queue has ready tickets behind blocked tickets
+echo -e "${BLUE}🔍 Checking queue efficiency...${NC}"
+QUEUE_TICKETS=$(jq -r --arg agent "$AGENT_NAME" '.[$agent].queued_tickets[]' "$AGENT_REGISTRY")
+QUEUE_SIZE=$(echo "$QUEUE_TICKETS" | wc -l)
+
+if [ "$QUEUE_SIZE" -gt 1 ]; then
+    # Check if first ticket is blocked but later tickets might be ready
+    FIRST_TICKET=$(echo "$QUEUE_TICKETS" | head -1)
+    if ! ./depend check "$FIRST_TICKET" >/dev/null 2>&1; then
+        echo -e "${YELLOW}⚠️  Queue contains blocked ticket at front${NC}"
+        echo -e "${BLUE}💡 Consider running: ./optimize_queues $AGENT_NAME${NC}"
+        echo -e "${BLUE}   This will move ready tickets to the front of the queue${NC}"
+    fi
+fi

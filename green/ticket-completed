@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# ticket-completed - Handle ticket completion workflow
+# Usage: ./ticket-completed <TICKET_ID> <AGENT_NAME> [NEXT_TICKET_ID]
+
+# Load environment variables
+if [ -f ".env" ]; then
+    export $(cat .env | xargs)
+fi
+
+set -e
+
+TICKET_ID="$1"
+AGENT_NAME="$2"
+NEXT_TICKET="$3"
+
+if [ -z "$TICKET_ID" ] || [ -z "$AGENT_NAME" ]; then
+    echo "❌ Usage: ./ticket-completed <TICKET_ID> <AGENT_NAME> [NEXT_TICKET_ID]"
+    echo "   Example: ./ticket-completed CEN-786 Agent-Sam CEN-789"
+    exit 1
+fi
+
+echo "🎯 [0;34mProcessing Ticket Completion[0m"
+echo "📋 Ticket: $TICKET_ID"
+echo "👤 Agent: $AGENT_NAME"
+if [ -n "$NEXT_TICKET" ]; then
+    echo "⏭️  Next: $NEXT_TICKET"
+fi
+echo
+
+# Step 1: Update ticket status to Done in Linear
+echo "🔄 Step 1: Updating Linear ticket status..."
+saber.py status "$TICKET_ID" "Done"
+if [ $? -eq 0 ]; then
+    echo "✅ $TICKET_ID marked as Done in Linear"
+else
+    echo "❌ Failed to update $TICKET_ID status"
+    exit 1
+fi
+
+# Step 2: Update agent registry
+echo "🔄 Step 2: Updating agent registry..."
+
+# Check if agent registry exists
+if [ ! -f "agent-registry.json" ]; then
+    echo "❌ agent-registry.json not found"
+    exit 1
+fi
+
+# Create backup
+cp agent-registry.json agent-registry.json.bak
+
+# Use Python to update the registry
+python3 << EOF
+import json
+import sys
+from datetime import datetime
+
+# Load registry
+with open('agent-registry.json', 'r') as f:
+    registry = json.load(f)
+
+agent_name = "$AGENT_NAME"
+ticket_id = "$TICKET_ID"
+next_ticket = "$NEXT_TICKET" if "$NEXT_TICKET" else None
+
+if agent_name not in registry:
+    print(f"❌ Agent {agent_name} not found in registry")
+    sys.exit(1)
+
+agent = registry[agent_name]
+
+# Remove completed ticket from active_tickets
+if ticket_id in agent.get('active_tickets', []):
+    agent['active_tickets'].remove(ticket_id)
+    print(f"✅ Removed {ticket_id} from {agent_name}'s active tickets")
+else:
+    print(f"⚠️  {ticket_id} was not in {agent_name}'s active tickets")
+
+# If agent has no more active tickets, set to available
+if not agent.get('active_tickets', []):
+    agent['status'] = 'available'
+    print(f"✅ {agent_name} status set to available")
+
+# Handle next ticket assignment
+if next_ticket:
+    # Remove from queued if it's there
+    if next_ticket in agent.get('queued_tickets', []):
+        agent['queued_tickets'].remove(next_ticket)
+        print(f"✅ Moved {next_ticket} from queue to ready for assignment")
+    
+    # Don't auto-assign - let assign_ticket handle that with full checks
+    print(f"📋 {next_ticket} ready for assignment to {agent_name}")
+
+# Update last_updated
+agent['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+
+# Save registry
+with open('agent-registry.json', 'w') as f:
+    json.dump(registry, f, indent=2, ensure_ascii=False)
+
+print(f"✅ Agent registry updated for {agent_name}")
+EOF
+
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to update agent registry"
+    cp agent-registry.json.bak agent-registry.json
+    exit 1
+fi
+
+# Step 3: Check for recursive parent completion
+echo "🔄 Step 3: Checking for parent ticket completion..."
+./parent-completion-check.py "$TICKET_ID"
+
+if [ $? -ne 0 ]; then
+    echo "⚠️  Parent completion check encountered errors, but continuing..."
+fi
+
+# Step 4: Check for dependency updates  
+echo "🔄 Step 4: Checking dependency impacts..."
+./depend list "$TICKET_ID" 2>/dev/null || echo "📋 No dependencies found for $TICKET_ID"
+
+# Step 5: Summary and next steps
+echo
+echo "🎉 [0;32mTicket Completion Processed Successfully[0m"
+echo "✅ $TICKET_ID marked as Done"
+echo "✅ $AGENT_NAME registry updated"
+echo "✅ Status: $([ -z "$(python3 -c "import json; registry=json.load(open('agent-registry.json')); print(registry['$AGENT_NAME']['active_tickets'])" 2>/dev/null)" ] && echo "Available" || echo "Still has active work")"
+
+if [ -n "$NEXT_TICKET" ]; then
+    echo
+    echo "⏭️  [0;33mNext Steps:[0m"
+    echo "   Use: ./assign_ticket $NEXT_TICKET $AGENT_NAME"
+    echo "   This will run full dependency and quality checks"
+fi
+
+echo
+echo "📊 [0;34mProject Status Update:[0m"
+./system-dashboard overview | head -15
+
+# Cleanup backup if successful
+rm -f agent-registry.json.bak
+
+echo
+echo "🎯 Completion process finished successfully!"

@@ -19,32 +19,401 @@ VALIDATE="✨"
 BULK="📦"
 
 # Usage check
-if [ $# -lt 2 ]; then
-    echo -e "${ERROR} Usage: ./bulk_breakdown <breakdown_type> <title> [description] [parent_id]"
-    echo -e "${INFO} Breakdown types:"
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./bulk_breakdown <command> [args...]"
+    echo -e "${INFO} Commands:"
+    echo -e "${INFO}   analyze <title> [description] - Generate systematic breakdown analysis"
+    echo -e "${INFO}   plan <analysis_file> - Create breakdown specification from analysis"
     echo -e "${INFO}   epic <title> [description] - Research + Implementation phases"
     echo -e "${INFO}   implementation <title> [description] [parent] - Split large implementation"
     echo -e "${INFO}   split <parent_id> - Break down existing ticket that failed validation"
     echo -e "${INFO} Examples:"
+    echo -e "${INFO}   ./bulk_breakdown analyze 'API Rewrite' 'Convert to GraphQL'"
+    echo -e "${INFO}   ./bulk_breakdown plan /tmp/api_rewrite_analysis.md"
     echo -e "${INFO}   ./bulk_breakdown epic 'API Rewrite' 'Convert to GraphQL'"
     echo -e "${INFO}   ./bulk_breakdown implementation 'CLI Framework' 'Click + config + auth' CEN-10"
     echo -e "${INFO}   ./bulk_breakdown split CEN-15"
     exit 1
 fi
 
-breakdown_type="$1"
+command="$1"
 title="$2"
 description="${3:-}"
 parent_id="${4:-}"
 
 echo -e "${BULK} ${BLUE}Agent-Knowledge Bulk Breakdown Framework${NC}"
-echo "✨ Processing ${breakdown_type} breakdown: ${title}"
+echo "✨ Processing ${command}: ${title}"
 echo ""
 
-# Step 1: Analysis
-echo -e "${ANALYZE} Step 1: Analyzing breakdown requirements..."
+case "$command" in
+    "analyze")
+        if [ -z "$title" ]; then
+            echo -e "${ERROR} Title required for analysis"
+            exit 1
+        fi
+        
+        echo -e "${ANALYZE} Generating systematic breakdown analysis..."
+        
+        # Create analysis template
+        analysis_file="/tmp/breakdown_analysis_$(date +%s).md"
+        
+        cat > "$analysis_file" << 'ANALYSIS_TEMPLATE'
+# Breakdown Analysis Template
 
-case "$breakdown_type" in
+## 📋 **Task Overview**
+**Title:** TASK_TITLE
+**Description:** TASK_DESCRIPTION
+
+## 🔍 **Complexity Analysis**
+
+### **Business Domain Analysis**
+- [ ] **Single Business Domain**: Does this task focus on ONE core business capability?
+  - Authentication/Authorization
+  - File Discovery/Management  
+  - Audio Streaming
+  - User Interface/Experience
+  - Data Storage/Sync
+  - External Integration
+  - Other: ___________
+
+- [ ] **Multiple Business Domains**: List if task spans multiple business areas:
+  - Domain 1: ___________
+  - Domain 2: ___________
+  - Domain 3: ___________
+
+### **Technical Domain Analysis**  
+Count technical domains involved:
+- [ ] Android UI Components
+- [ ] API Client/Network
+- [ ] Database/Storage
+- [ ] Background Services
+- [ ] File System Operations
+- [ ] Audio Processing
+- [ ] Authentication Systems
+- [ ] External Integration
+- [ ] Configuration/Settings
+- [ ] Testing/Validation
+- [ ] Performance/Optimization
+- [ ] Other: ___________
+
+**Technical Domain Count:** ___ (2-4 acceptable, 5+ suggests breakdown)
+
+### **Implementation Scope Analysis**
+- [ ] **Single Implementation Context**: Can this be implemented in one focused coding session?
+- [ ] **Multiple Implementation Contexts**: Requires work across multiple:
+  - [ ] Different codebases
+  - [ ] Different architectural layers
+  - [ ] Different development phases
+  - [ ] Different skill sets
+
+### **Task Decomposition Check**
+Count distinct implementable tasks:
+1. ___________
+2. ___________
+3. ___________
+4. ___________
+5. ___________
+
+**Task Count:** ___ (1-3 good, 4+ suggests breakdown)
+
+## 🎯 **Breakdown Recommendation**
+
+### **Assessment Result:**
+- [ ] **✅ GOOD SCOPE**: Single domain, focused task, ready for implementation
+- [ ] **⚠️ NEEDS REFINEMENT**: Some complexity but manageable with clarification  
+- [ ] **❌ BREAKDOWN REQUIRED**: Multiple domains/tasks, too complex for single ticket
+
+### **Breakdown Type Recommendation:**
+- [ ] **Epic Breakdown**: Research → Implementation phases needed
+- [ ] **Implementation Breakdown**: Large implementation → focused subtasks
+- [ ] **Domain Separation**: Multiple business domains → separate domain tickets
+- [ ] **Context Separation**: Multiple implementation contexts → separate context tickets
+
+### **Proposed Structure:**
+```
+Parent Ticket: [Title]
+├── Subtask 1: [Specific Area]
+├── Subtask 2: [Specific Area]  
+├── Subtask 3: [Specific Area]
+└── Subtask 4: [Specific Area]
+```
+
+## 📝 **Implementation Notes**
+- **Prerequisites**: ___________
+- **Dependencies**: ___________
+- **Integration Points**: ___________
+- **Risk Areas**: ___________
+
+## ✅ **Quality Gates**
+- [ ] Each subtask focuses on single implementation context
+- [ ] Each subtask has clear deliverable
+- [ ] Dependencies between subtasks identified
+- [ ] Parent ticket coordination approach defined
+ANALYSIS_TEMPLATE
+
+        # Replace placeholders
+        sed -i "s/TASK_TITLE/$title/g" "$analysis_file"
+        sed -i "s/TASK_DESCRIPTION/${description:-No description provided}/g" "$analysis_file"
+        
+        echo -e "${SUCCESS} Analysis template created: $analysis_file"
+        echo ""
+        echo -e "${INFO} ${BLUE}=== NEXT STEPS ===${NC}"
+        echo -e "${INFO} 1. Edit the analysis file to complete the assessment:"
+        echo -e "${INFO}    ${analysis_file}"
+        echo -e "${INFO} 2. After completing analysis, generate breakdown plan:"
+        echo -e "${INFO}    ./bulk_breakdown plan ${analysis_file}"
+        echo -e "${BLUE}=========================${NC}"
+        ;;
+        
+    "plan")
+        if [ -z "$title" ] || [ ! -f "$title" ]; then
+            echo -e "${ERROR} Valid analysis file required for planning"
+            exit 1
+        fi
+        
+        analysis_file="$title"
+        echo -e "${ANALYZE} Generating breakdown plan from analysis..."
+        
+        # Extract key information from analysis
+        breakdown_type_line=$(grep -A 5 "Breakdown Type Recommendation" "$analysis_file" | grep -E "\[x\]|\[X\]" | head -1)
+        
+        if [[ $breakdown_type_line == *"Epic Breakdown"* ]]; then
+            breakdown_type="epic"
+        elif [[ $breakdown_type_line == *"Implementation Breakdown"* ]]; then
+            breakdown_type="implementation"  
+        elif [[ $breakdown_type_line == *"Domain Separation"* ]]; then
+            breakdown_type="domain"
+        elif [[ $breakdown_type_line == *"Context Separation"* ]]; then
+            breakdown_type="context"
+        else
+            echo -e "${ERROR} No breakdown type selected in analysis file"
+            echo -e "${INFO} Please mark one breakdown type recommendation with [x]"
+            exit 1
+        fi
+        
+        # Create breakdown plan
+        plan_file="/tmp/breakdown_plan_$(date +%s).md"
+        task_title=$(grep "Title:" "$analysis_file" | cut -d' ' -f2-)
+        
+        # Extract proposed structure for better subtask naming
+        proposed_structure=$(awk '/### \*\*Proposed Structure:\*\*/{flag=1; next} /##/{flag=0} flag' "$analysis_file")
+        
+        cat > "$plan_file" << PLAN_HEADER
+# Breakdown Execution Plan
+
+## Source Analysis
+**File:** $analysis_file
+**Task:** $task_title
+**Breakdown Type:** $breakdown_type
+
+## Proposed Structure
+$proposed_structure
+
+## Execution Commands
+PLAN_HEADER
+
+        case "$breakdown_type" in
+            "epic")
+                cat >> "$plan_file" << 'EPIC_PLAN'
+
+### Epic Structure Creation
+```bash
+# 1. Create epic parent
+./write_ticket research "TASK_TITLE Epic" "Epic coordination ticket"
+
+# 2. Create research phase  
+./write_ticket research "TASK_TITLE Architecture Research" "Research and design phase" EPIC_ID
+
+# 3. Create implementation parent
+./write_ticket implementation "TASK_TITLE Implementation" "Implementation coordination" EPIC_ID
+
+# 4. Create implementation subtasks
+./write_ticket implementation "TASK_TITLE Core Framework" "Core implementation" IMPL_PARENT_ID
+./write_ticket implementation "TASK_TITLE Integration Layer" "Integration implementation" IMPL_PARENT_ID
+./write_ticket implementation "TASK_TITLE Business Logic" "Business logic implementation" IMPL_PARENT_ID
+```
+
+### Dependencies
+```bash
+# Implementation parent depends on research completion
+./depend add IMPL_PARENT_ID blocked-by RESEARCH_ID
+```
+EPIC_PLAN
+                ;;
+            "implementation")
+                # Extract specific subtasks from the proposed structure
+                subtask_1=$(echo "$proposed_structure" | grep "Subtask 1:" | sed 's/.*Subtask 1: //' | sed 's/├── //')
+                subtask_2=$(echo "$proposed_structure" | grep "Subtask 2:" | sed 's/.*Subtask 2: //' | sed 's/├── //')
+                subtask_3=$(echo "$proposed_structure" | grep "Subtask 3:" | sed 's/.*Subtask 3: //' | sed 's/├── //')
+                subtask_4=$(echo "$proposed_structure" | grep "Subtask 4:" | sed 's/.*Subtask 4: //' | sed 's/└── //')
+                
+                cat >> "$plan_file" << IMPL_PLAN
+
+### Implementation Breakdown
+\`\`\`bash
+# 1. Convert existing ticket to parent (if splitting existing)
+# python3 ./.tools/saber.py description PARENT_ID "Parent coordination description"
+
+# 2. Create focused subtasks based on analysis
+./write_ticket implementation "${subtask_1:-TASK_TITLE Component A}" "First focused implementation area" PARENT_ID
+./write_ticket implementation "${subtask_2:-TASK_TITLE Component B}" "Second focused implementation area" PARENT_ID  
+./write_ticket implementation "${subtask_3:-TASK_TITLE Component C}" "Third focused implementation area" PARENT_ID
+./write_ticket implementation "${subtask_4:-TASK_TITLE Integration}" "Integration and testing implementation" PARENT_ID
+\`\`\`
+IMPL_PLAN
+                ;;
+            "domain"|"context")
+                cat >> "$plan_file" << 'SEPARATION_PLAN'
+
+### Domain/Context Separation
+```bash
+# Create separate tickets for each domain/context
+./write_ticket implementation "TASK_TITLE - Domain A" "First domain implementation"
+./write_ticket implementation "TASK_TITLE - Domain B" "Second domain implementation"  
+./write_ticket implementation "TASK_TITLE - Domain C" "Third domain implementation"
+```
+
+### Coordination (if needed)
+```bash
+# Create coordination parent if integration required
+./write_ticket implementation "TASK_TITLE Coordination" "Integration coordination parent"
+# Set domain tickets as children of coordination parent
+```
+SEPARATION_PLAN
+                ;;
+        esac
+        
+        cat >> "$plan_file" << 'PLAN_FOOTER'
+
+## Validation Checklist
+- [ ] All tickets created successfully
+- [ ] Parent-child relationships established
+- [ ] Dependencies configured
+- [ ] Quality validation passed for each ticket
+- [ ] Assignment plan ready
+
+## Assignment Strategy
+1. Start with research/analysis tickets
+2. Block implementation on research completion
+3. Assign implementation subtasks based on agent expertise
+4. Coordinate integration and testing
+
+## Notes
+- Replace TASK_TITLE, EPIC_ID, PARENT_ID, etc. with actual values
+- Run validation on each created ticket
+- Consider agent workload when assigning
+PLAN_FOOTER
+
+        # Replace task title placeholder
+        sed -i "s/TASK_TITLE/$task_title/g" "$plan_file"
+        
+        echo -e "${SUCCESS} Breakdown plan created: $plan_file"
+        echo ""
+        echo -e "${INFO} ${BLUE}=== NEXT STEPS ===${NC}"
+        echo -e "${INFO} 1. Review the breakdown plan:"
+        echo -e "${INFO}    ${plan_file}"
+        echo -e "${INFO} 2. Execute the breakdown:"
+        echo -e "${INFO}    ./bulk_breakdown execute ${plan_file}"
+        echo -e "${BLUE}=========================${NC}"
+        ;;
+        
+    "execute")
+        if [ -z "$title" ] || [ ! -f "$title" ]; then
+            echo -e "${ERROR} Valid breakdown plan file required for execution"
+            exit 1
+        fi
+        
+        plan_file="$title"
+        echo -e "${ANALYZE} Executing breakdown plan: $plan_file"
+        
+        # Extract and execute commands from plan file
+        echo -e "${WORKING} Extracting execution commands..."
+        
+        # Find code blocks with bash commands
+        temp_script="/tmp/breakdown_execute_$(date +%s).sh"
+        
+        # Extract commands between ```bash and ``` markers
+        awk '/```bash/{flag=1; next} /```/{flag=0} flag && /^[^#]/ && NF>0' "$plan_file" > "$temp_script"
+        
+        if [ ! -s "$temp_script" ]; then
+            echo -e "${ERROR} No executable commands found in plan file"
+            echo -e "${INFO} Plan file should contain bash code blocks with commands"
+            exit 1
+        fi
+        
+        echo -e "${INFO} Found execution commands:"
+        cat "$temp_script"
+        echo ""
+        
+        read -p "Execute these commands? (y/N): " confirm
+        if [[ $confirm != [yY] ]]; then
+            echo -e "${INFO} Execution cancelled"
+            rm "$temp_script"
+            exit 0
+        fi
+        
+        echo -e "${WORKING} Executing breakdown commands..."
+        
+        # Execute commands with variable tracking
+        declare -A ticket_vars
+        
+        while IFS= read -r cmd; do
+            # Skip empty lines and comments
+            [[ -z "$cmd" || "$cmd" =~ ^[[:space:]]*# ]] && continue
+            
+            echo -e "${WORKING} Executing: $cmd"
+            
+            # Handle variable substitution for ticket IDs
+            if [[ $cmd == *"EPIC_ID"* ]] && [[ -n "${ticket_vars[EPIC_ID]}" ]]; then
+                cmd=${cmd//EPIC_ID/${ticket_vars[EPIC_ID]}}
+            fi
+            if [[ $cmd == *"IMPL_PARENT_ID"* ]] && [[ -n "${ticket_vars[IMPL_PARENT_ID]}" ]]; then
+                cmd=${cmd//IMPL_PARENT_ID/${ticket_vars[IMPL_PARENT_ID]}}
+            fi
+            if [[ $cmd == *"RESEARCH_ID"* ]] && [[ -n "${ticket_vars[RESEARCH_ID]}" ]]; then
+                cmd=${cmd//RESEARCH_ID/${ticket_vars[RESEARCH_ID]}}
+            fi
+            if [[ $cmd == *"PARENT_ID"* ]] && [[ -n "${ticket_vars[PARENT_ID]}" ]]; then
+                cmd=${cmd//PARENT_ID/${ticket_vars[PARENT_ID]}}
+            fi
+            
+            # Execute command and capture ticket ID
+            result=$(eval "$cmd" 2>&1)
+            echo "$result"
+            
+            # Extract ticket ID from result and store in variables
+            if [[ $result == *"Created"* ]]; then
+                ticket_id=$(echo "$result" | grep -o 'CEN-[0-9]*' | head -1)
+                
+                # Determine variable name based on ticket type
+                if [[ $cmd == *"Epic"* ]]; then
+                    ticket_vars[EPIC_ID]=$ticket_id
+                    echo -e "${SUCCESS} Stored EPIC_ID=$ticket_id"
+                elif [[ $cmd == *"Research"* ]]; then
+                    ticket_vars[RESEARCH_ID]=$ticket_id
+                    echo -e "${SUCCESS} Stored RESEARCH_ID=$ticket_id"
+                elif [[ $cmd == *"Implementation"* ]] && [[ $cmd != *"Component"* ]] && [[ $cmd != *"Integration"* ]]; then
+                    ticket_vars[IMPL_PARENT_ID]=$ticket_id
+                    ticket_vars[PARENT_ID]=$ticket_id
+                    echo -e "${SUCCESS} Stored IMPL_PARENT_ID=$ticket_id"
+                else
+                    echo -e "${SUCCESS} Created ticket: $ticket_id"
+                fi
+            fi
+            
+            echo ""
+        done < "$temp_script"
+        
+        rm "$temp_script"
+        
+        echo -e "${SUCCESS} ${GREEN}Breakdown execution complete!${NC}"
+        echo -e "${INFO} Created tickets:"
+        for var in "${!ticket_vars[@]}"; do
+            echo -e "${INFO}   $var: ${ticket_vars[$var]}"
+        done
+        ;;
+
+# Legacy commands (maintained for backward compatibility)
     "epic")
         echo -e "${INFO} Epic breakdown detected"
         echo -e "${INFO} Recommended structure:"
@@ -218,7 +587,7 @@ The implementation is broken down into focused subtasks that each handle a speci
         echo -e "${WORKING} Running validation analysis..."
         validation_result=$(./validate_ticket "$ticket_id" 2>/dev/null)
         
-        if [[ $validation_result == *"VALIDATION FAILED"* ]]; then
+        if [[ $validation_result == *"BREAKDOWN RECOMMENDED"* ]]; then
             echo -e "${WARNING} Validation confirms breakdown needed"
             
             # Convert to parent ticket

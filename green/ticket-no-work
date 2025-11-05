@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# ticket-no-work - Handle tickets that have no work to do
+# Usage: ./ticket-no-work <TICKET_ID> <AGENT_NAME> <REASON> [NEXT_TICKET_ID]
+
+set -e
+
+TICKET_ID="$1"
+AGENT_NAME="$2"
+REASON="$3"
+NEXT_TICKET="$4"
+
+if [ -z "$TICKET_ID" ] || [ -z "$AGENT_NAME" ] || [ -z "$REASON" ]; then
+    echo "❌ Usage: ./ticket-no-work <TICKET_ID> <AGENT_NAME> <REASON> [NEXT_TICKET_ID]"
+    echo "   Example: ./ticket-no-work CEN-789 Agent-Sam 'No duplication found in analysis' CEN-787"
+    exit 1
+fi
+
+echo "🚫 [0;34mProcessing No-Work Ticket Closure[0m"
+echo "📋 Ticket: $TICKET_ID"
+echo "👤 Agent: $AGENT_NAME"
+echo "❓ Reason: $REASON"
+if [ -n "$NEXT_TICKET" ]; then
+    echo "⏭️  Next: $NEXT_TICKET"
+fi
+echo
+
+# Step 1: Add comment explaining why no work is needed
+echo "🔄 Step 1: Adding explanatory comment..."
+saber.py comment "$TICKET_ID" "**No Work Needed**: $REASON
+
+This ticket has been determined to have no actionable work required. Closing as completed with no changes needed."
+
+if [ $? -eq 0 ]; then
+    echo "✅ Comment added explaining no-work closure"
+else
+    echo "❌ Failed to add comment"
+    exit 1
+fi
+
+# Step 2: Update ticket status to Done (completed, but with no work)
+echo "🔄 Step 2: Marking ticket as Done (no work needed)..."
+saber.py status "$TICKET_ID" "Done"
+if [ $? -eq 0 ]; then
+    echo "✅ $TICKET_ID marked as Done (no work needed)"
+else
+    echo "❌ Failed to update $TICKET_ID status"
+    exit 1
+fi
+
+# Step 3: Update agent registry
+echo "🔄 Step 3: Updating agent registry..."
+
+# Check if agent registry exists
+if [ ! -f "agent-registry.json" ]; then
+    echo "❌ agent-registry.json not found"
+    exit 1
+fi
+
+# Create backup
+cp agent-registry.json agent-registry.json.bak
+
+# Use Python to update the registry
+python3 << EOF
+import json
+import sys
+from datetime import datetime
+
+# Load registry
+with open('agent-registry.json', 'r') as f:
+    registry = json.load(f)
+
+agent_name = "$AGENT_NAME"
+ticket_id = "$TICKET_ID"
+next_ticket = "$NEXT_TICKET" if "$NEXT_TICKET" else None
+
+if agent_name not in registry:
+    print(f"❌ Agent {agent_name} not found in registry")
+    sys.exit(1)
+
+agent = registry[agent_name]
+
+# Remove ticket from active_tickets
+if ticket_id in agent.get('active_tickets', []):
+    agent['active_tickets'].remove(ticket_id)
+    print(f"✅ Removed {ticket_id} from {agent_name}'s active tickets")
+else:
+    print(f"⚠️  {ticket_id} was not in {agent_name}'s active tickets")
+
+# If agent has no more active tickets, set to available
+if not agent.get('active_tickets', []):
+    agent['status'] = 'available'
+    print(f"✅ {agent_name} status set to available")
+
+# Handle next ticket preparation
+if next_ticket:
+    # Remove from queued if it's there and prepare for assignment
+    if next_ticket in agent.get('queued_tickets', []):
+        agent['queued_tickets'].remove(next_ticket)
+        print(f"✅ Prepared {next_ticket} for assignment to {agent_name}")
+    
+    print(f"📋 {next_ticket} ready for assignment to {agent_name}")
+
+# Update last_updated
+agent['last_updated'] = datetime.now().strftime('%Y-%m-%d')
+
+# Save registry
+with open('agent-registry.json', 'w') as f:
+    json.dump(registry, f, indent=2, ensure_ascii=False)
+
+print(f"✅ Agent registry updated for {agent_name}")
+EOF
+
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to update agent registry"
+    cp agent-registry.json.bak agent-registry.json
+    exit 1
+fi
+
+# Step 4: Send Slack notification
+echo "🔄 Step 4: Sending Slack notification..."
+slack_rest_client.py send_message "@$AGENT_NAME - $TICKET_ID closed as **No Work Needed**
+
+✅ **$TICKET_ID**: $(saber.py get $TICKET_ID | grep -o '"title": "[^"]*"' | sed 's/"title": "//;s/"//')
+❓ **Reason**: $REASON
+📋 **Status**: Done (no changes required)
+
+$(if [ -n "$NEXT_TICKET" ]; then echo "⏭️ Ready for assignment to: $NEXT_TICKET"; else echo "🎯 Ready for new assignment!"; fi)"
+
+# Step 5: Summary and next steps
+echo
+echo "✅ [0;32mNo-Work Ticket Closure Processed Successfully[0m"
+echo "✅ $TICKET_ID marked as Done (no work needed)"
+echo "✅ $AGENT_NAME registry updated"
+echo "✅ Slack notification sent"
+echo "✅ Status: $([ -z "$(python3 -c "import json; registry=json.load(open('agent-registry.json')); print(registry['$AGENT_NAME']['active_tickets'])" 2>/dev/null)" ] && echo "Available" || echo "Still has active work")"
+
+if [ -n "$NEXT_TICKET" ]; then
+    echo
+    echo "⏭️  [0;33mNext Steps:[0m"
+    echo "   Use: ./assign_ticket $NEXT_TICKET $AGENT_NAME"
+    echo "   This will run full dependency and quality checks"
+fi
+
+echo
+echo "📊 [0;34mProject Status Update:[0m"
+./system-dashboard overview | head -15
+
+# Cleanup backup if successful
+rm -f agent-registry.json.bak
+
+echo
+echo "🎯 No-work closure process finished successfully!"

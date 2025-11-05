@@ -1,0 +1,167 @@
+#!/bin/bash
+
+# optimize_queues - Reorder agent queues to prioritize ready tickets
+# This tool moves dependency-ready tickets to the front of queues
+# while preserving FIFO order within ready/blocked groups
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_REGISTRY="$SCRIPT_DIR/agent-registry.json"
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+show_usage() {
+    echo -e "${BLUE}optimize_queues - Queue Priority Optimizer${NC}"
+    echo ""
+    echo "Usage: ./optimize_queues [AGENT-NAME]"
+    echo ""
+    echo "Examples:"
+    echo "  ./optimize_queues                    # Optimize all agent queues"
+    echo "  ./optimize_queues Agent-Sam         # Optimize specific agent queue"
+    echo ""
+    echo "Optimization Rules:"
+    echo "  - Ready tickets (no blocking dependencies) move to front"
+    echo "  - Blocked tickets move to back"
+    echo "  - FIFO order preserved within ready/blocked groups"
+    echo "  - No tickets are removed, only reordered"
+}
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    show_usage
+    exit 0
+fi
+
+echo -e "${BLUE}🎯 Queue Optimization Tool${NC}"
+
+# Validate agent registry exists
+if [ ! -f "$AGENT_REGISTRY" ]; then
+    echo -e "${RED}❌ Agent registry not found: $AGENT_REGISTRY${NC}"
+    exit 1
+fi
+
+TARGET_AGENT="$1"
+
+# Get agents to process
+if [ -n "$TARGET_AGENT" ]; then
+    # Check if agent exists
+    if ! jq -e --arg agent "$TARGET_AGENT" '.[$agent]' "$AGENT_REGISTRY" > /dev/null 2>&1; then
+        echo -e "${RED}❌ Agent not found in registry: $TARGET_AGENT${NC}"
+        echo "Available agents:"
+        jq -r 'keys[]' "$AGENT_REGISTRY" | grep -v '^_' | sed 's/^/  - /'
+        exit 1
+    fi
+    AGENTS=("$TARGET_AGENT")
+else
+    # Get all agents with queued tickets
+    mapfile -t AGENTS < <(jq -r 'to_entries[] | select(.value.queued_tickets) | select(.value.queued_tickets | length > 0) | .key' "$AGENT_REGISTRY")
+fi
+
+if [ ${#AGENTS[@]} -eq 0 ]; then
+    echo -e "${GREEN}✅ No agents have queued tickets to optimize${NC}"
+    exit 0
+fi
+
+echo -e "📋 Processing ${#AGENTS[@]} agent(s): ${AGENTS[*]}"
+echo ""
+
+OPTIMIZATION_NEEDED=false
+
+# Create backup
+BACKUP_FILE="${AGENT_REGISTRY}.optimize.backup.$(date +%s)"
+cp "$AGENT_REGISTRY" "$BACKUP_FILE"
+echo -e "${BLUE}📄 Backup created: $BACKUP_FILE${NC}"
+
+# Process each agent
+for AGENT in "${AGENTS[@]}"; do
+    echo -e "${BLUE}👤 Analyzing $AGENT's queue...${NC}"
+    
+    # Get current queue
+    QUEUE_TICKETS=$(jq -r --arg agent "$AGENT" '.[$agent].queued_tickets[]?' "$AGENT_REGISTRY" 2>/dev/null || echo "")
+    
+    if [ -z "$QUEUE_TICKETS" ]; then
+        echo -e "  ${GREEN}✅ No queued tickets${NC}"
+        continue
+    fi
+    
+    READY_TICKETS=()
+    BLOCKED_TICKETS=()
+    
+    # Categorize tickets by dependency status
+    while IFS= read -r ticket; do
+        if [ -z "$ticket" ]; then continue; fi
+        
+        echo -e "  🔍 Checking $ticket..."
+        
+        # Check if ticket is ready (no blocking dependencies)
+        if ./depend check "$ticket" >/dev/null 2>&1; then
+            echo -e "    ${GREEN}✅ Ready${NC}"
+            READY_TICKETS+=("$ticket")
+        else
+            echo -e "    ${YELLOW}⏳ Blocked${NC}"
+            BLOCKED_TICKETS+=("$ticket")
+        fi
+    done <<< "$QUEUE_TICKETS"
+    
+    # Create optimized order: ready tickets first, then blocked tickets
+    OPTIMIZED_TICKETS=("${READY_TICKETS[@]}" "${BLOCKED_TICKETS[@]}")
+    
+    # Convert current and optimized to strings for comparison
+    CURRENT_ORDER=$(echo "$QUEUE_TICKETS" | tr '\n' '|')
+    OPTIMIZED_ORDER=$(printf '%s|' "${OPTIMIZED_TICKETS[@]}")
+    
+    if [ "$CURRENT_ORDER" = "$OPTIMIZED_ORDER" ]; then
+        echo -e "  ${GREEN}✅ Queue already optimized${NC}"
+    else
+        echo -e "  ${YELLOW}🔄 Optimization needed${NC}"
+        echo -e "    ${BLUE}Current:${NC} $(echo "$QUEUE_TICKETS" | tr '\n' ' ')"
+        echo -e "    ${GREEN}Optimized:${NC} ${OPTIMIZED_TICKETS[*]}"
+        
+        OPTIMIZATION_NEEDED=true
+        
+        # Update the queue in registry
+        TICKETS_JSON=$(printf '%s\n' "${OPTIMIZED_TICKETS[@]}" | jq -R . | jq -s .)
+        jq --arg agent "$AGENT" --argjson tickets "$TICKETS_JSON" '
+            .[$agent].queued_tickets = $tickets |
+            .[$agent].last_updated = (now | strftime("%Y-%m-%d"))
+        ' "$AGENT_REGISTRY" > "${AGENT_REGISTRY}.tmp"
+        
+        mv "${AGENT_REGISTRY}.tmp" "$AGENT_REGISTRY"
+    fi
+    
+    echo ""
+done
+
+if [ "$OPTIMIZATION_NEEDED" = false ]; then
+    echo -e "${GREEN}✅ All queues are already optimized${NC}"
+    rm -f "$BACKUP_FILE"
+    exit 0
+fi
+
+# Validate JSON
+if ! jq empty "$AGENT_REGISTRY" 2>/dev/null; then
+    echo -e "${RED}❌ JSON validation failed during optimization${NC}"
+    cp "$BACKUP_FILE" "$AGENT_REGISTRY"
+    exit 1
+fi
+
+echo -e "${GREEN}🎯 Queue optimization completed!${NC}"
+echo ""
+
+# Show final state
+echo -e "${BLUE}📋 Optimized queue state:${NC}"
+for AGENT in "${AGENTS[@]}"; do
+    QUEUE_COUNT=$(jq -r --arg agent "$AGENT" '.[$agent].queued_tickets | length' "$AGENT_REGISTRY")
+    if [ "$QUEUE_COUNT" -gt 0 ]; then
+        echo -e "${BLUE}👤 $AGENT:${NC}"
+        jq -r --arg agent "$AGENT" '.[$agent].queued_tickets[]' "$AGENT_REGISTRY" | nl -v1 | sed 's/^/  /'
+    fi
+done
+
+echo ""
+echo -e "${BLUE}📄 Backup preserved: $BACKUP_FILE${NC}"

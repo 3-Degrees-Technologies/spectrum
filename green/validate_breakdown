@@ -1,0 +1,188 @@
+#!/bin/bash
+# validate_breakdown command for Agent-Knowledge
+# Validates breakdown plans and analysis files for quality and completeness
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+VALIDATE="✨"
+
+# Usage check
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./validate_breakdown <file>"
+    echo -e "${INFO} Validates breakdown analysis or plan files"
+    echo -e "${INFO} Examples:"
+    echo -e "${INFO}   ./validate_breakdown /tmp/breakdown_analysis_123.md"
+    echo -e "${INFO}   ./validate_breakdown /tmp/breakdown_plan_456.md"
+    exit 1
+fi
+
+file="$1"
+
+if [ ! -f "$file" ]; then
+    echo -e "${ERROR} File not found: $file"
+    exit 1
+fi
+
+echo -e "${VALIDATE} ${BLUE}Breakdown File Validation${NC}"
+echo "📄 Validating: $file"
+echo ""
+
+# Determine file type
+if [[ $file == *"analysis"* ]]; then
+    file_type="analysis"
+elif [[ $file == *"plan"* ]]; then
+    file_type="plan"
+else
+    echo -e "${WARNING} Unknown file type, attempting auto-detection..."
+    if grep -q "## 🔍 \*\*Complexity Analysis\*\*" "$file"; then
+        file_type="analysis"
+    elif grep -q "## Execution Commands" "$file"; then
+        file_type="plan"
+    else
+        echo -e "${ERROR} Cannot determine file type (analysis or plan)"
+        exit 1
+    fi
+fi
+
+echo -e "${INFO} Detected file type: $file_type"
+echo ""
+
+validation_errors=0
+validation_warnings=0
+
+case "$file_type" in
+    "analysis")
+        echo -e "${VALIDATE} Validating analysis file structure..."
+        
+        # Check required sections
+        required_sections=(
+            "## 📋 \*\*Task Overview\*\*"
+            "## 🔍 \*\*Complexity Analysis\*\*"
+            "### \*\*Business Domain Analysis\*\*"
+            "### \*\*Technical Domain Analysis\*\*"
+            "### \*\*Implementation Scope Analysis\*\*"
+            "### \*\*Task Decomposition Check\*\*"
+            "## 🎯 \*\*Breakdown Recommendation\*\*"
+            "### \*\*Assessment Result:\*\*"
+            "### \*\*Breakdown Type Recommendation:\*\*"
+            "### \*\*Proposed Structure:\*\*"
+        )
+        
+        for section in "${required_sections[@]}"; do
+            if ! grep -q "$section" "$file"; then
+                echo -e "${ERROR} Missing required section: $section"
+                ((validation_errors++))
+            else
+                echo -e "${SUCCESS} Found section: ${section//\*/}"
+            fi
+        done
+        
+        # Check for completion indicators
+        echo ""
+        echo -e "${VALIDATE} Checking completion status..."
+        
+        # Count filled checkboxes
+        filled_boxes=$(grep -c "\[x\]\|\[X\]" "$file")
+        total_boxes=$(grep -c "\[ \]" "$file")
+        total_boxes=$((total_boxes + filled_boxes))
+        
+        if [ $filled_boxes -eq 0 ]; then
+            echo -e "${ERROR} No checkboxes completed (0/$total_boxes)"
+            ((validation_errors++))
+        elif [ $filled_boxes -lt $((total_boxes / 2)) ]; then
+            echo -e "${WARNING} Low completion rate ($filled_boxes/$total_boxes boxes checked)"
+            ((validation_warnings++))
+        else
+            echo -e "${SUCCESS} Good completion rate ($filled_boxes/$total_boxes boxes checked)"
+        fi
+        
+        # Check if task decomposition is filled
+        if grep -A 10 "### \*\*Task Decomposition Check\*\*" "$file" | grep -q "___________"; then
+            echo -e "${WARNING} Task decomposition section contains unfilled placeholders"
+            ((validation_warnings++))
+        fi
+        
+        # Check breakdown recommendation
+        if ! grep -A 10 "### \*\*Assessment Result:\*\*" "$file" | grep -q "\[x\]\|\[X\]"; then
+            echo -e "${ERROR} No assessment result selected"
+            ((validation_errors++))
+        fi
+        
+        if ! grep -A 10 "### \*\*Breakdown Type Recommendation:\*\*" "$file" | grep -q "\[x\]\|\[X\]"; then
+            echo -e "${ERROR} No breakdown type selected"
+            ((validation_errors++))
+        fi
+        ;;
+        
+    "plan")
+        echo -e "${VALIDATE} Validating plan file structure..."
+        
+        # Check required sections
+        required_sections=(
+            "## Source Analysis"
+            "## Execution Commands"
+            "## Validation Checklist"
+            "## Assignment Strategy"
+        )
+        
+        for section in "${required_sections[@]}"; do
+            if ! grep -q "$section" "$file"; then
+                echo -e "${ERROR} Missing required section: $section"
+                ((validation_errors++))
+            else
+                echo -e "${SUCCESS} Found section: $section"
+            fi
+        done
+        
+        # Check for executable commands
+        echo ""
+        echo -e "${VALIDATE} Checking executable commands..."
+        
+        bash_blocks=$(grep -c '```bash' "$file")
+        if [ $bash_blocks -eq 0 ]; then
+            echo -e "${ERROR} No bash command blocks found"
+            ((validation_errors++))
+        else
+            echo -e "${SUCCESS} Found $bash_blocks bash command blocks"
+        fi
+        
+        # Check for command patterns
+        if grep -A 100 '```bash' "$file" | grep -q './write_ticket\|./depend\|python3.*saber.py'; then
+            echo -e "${SUCCESS} Found valid breakdown commands"
+        else
+            echo -e "${WARNING} No recognizable breakdown commands found"
+            ((validation_warnings++))
+        fi
+        
+        # Check for placeholder replacement
+        if grep -q "TASK_TITLE\|EPIC_ID\|PARENT_ID\|IMPL_PARENT_ID\|RESEARCH_ID" "$file"; then
+            unreplaced=$(grep -o "TASK_TITLE\|EPIC_ID\|PARENT_ID\|IMPL_PARENT_ID\|RESEARCH_ID" "$file" | sort | uniq)
+            echo -e "${WARNING} Found unreplaced placeholders: $(echo $unreplaced | tr '\n' ' ')"
+            ((validation_warnings++))
+        fi
+        ;;
+esac
+
+echo ""
+echo -e "${VALIDATE} Validation Summary:"
+
+if [ $validation_errors -eq 0 ] && [ $validation_warnings -eq 0 ]; then
+    echo -e "${SUCCESS} ${GREEN}Validation passed! File is ready for use.${NC}"
+    exit 0
+elif [ $validation_errors -eq 0 ]; then
+    echo -e "${WARNING} ${YELLOW}Validation passed with $validation_warnings warnings${NC}"
+    echo -e "${INFO} File is usable but could be improved"
+    exit 0
+else
+    echo -e "${ERROR} ${RED}Validation failed with $validation_errors errors and $validation_warnings warnings${NC}"
+    echo -e "${INFO} Please address the errors before proceeding"
+    exit 1
+fi

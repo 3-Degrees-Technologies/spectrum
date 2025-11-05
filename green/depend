@@ -1,0 +1,478 @@
+#!/bin/bash
+# depend - Local ticket dependency management tool
+# Manages blocking relationships between Linear tickets
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+DEPEND="🔗"
+
+# Dependency file
+DEPS_FILE=".ticket_dependencies.json"
+
+# Usage check  
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./depend <command> [arguments...]"
+    echo -e "${INFO} Commands:"
+    echo -e "${INFO}   add <ticket> blocked-by <dependency>     # CEN-786 blocked by CEN-784"
+    echo -e "${INFO}   add <ticket> blocks <dependents>         # CEN-784 blocks CEN-786,CEN-787"
+    echo -e "${INFO}   remove <ticket> <dependency>             # Remove specific dependency"
+    echo -e "${INFO}   list <ticket>                            # Show dependencies for ticket"
+    echo -e "${INFO}   check <ticket>                           # Check if ticket is ready (no blockers)"
+    echo -e "${INFO}   ready                                    # List all ready tickets"
+    echo -e "${INFO}   tree <ticket>                            # Show dependency tree"
+    echo -e "${INFO}   clear <ticket>                           # Clear all dependencies for ticket"
+    echo ""
+    echo -e "${INFO} Examples:"
+    echo -e "${INFO}   ./depend add CEN-786 blocked-by CEN-784"
+    echo -e "${INFO}   ./depend add CEN-784 blocks CEN-786,CEN-787"
+    echo -e "${INFO}   ./depend check CEN-786"
+    echo -e "${INFO}   ./depend ready"
+    exit 1
+fi
+
+command="$1"
+ticket="$2"
+relation="$3"
+dependencies="$4"
+
+# Initialize dependencies file if it doesn't exist
+if [ ! -f "$DEPS_FILE" ]; then
+    echo '{}' > "$DEPS_FILE"
+fi
+
+# Helper functions
+validate_ticket() {
+    local ticket_id="$1"
+    if [[ ! "$ticket_id" =~ ^[A-Z]+-[0-9]+$ ]]; then
+        echo -e "${ERROR} Invalid ticket format: $ticket_id (expected: XXX-123)"
+        exit 1
+    fi
+}
+
+get_ticket_status() {
+    local ticket_id="$1"
+    saber.py get "$ticket_id" 2>/dev/null | jq -r '.state.name' 2>/dev/null || echo "Unknown"
+}
+
+add_dependency() {
+    local ticket="$1"
+    local relation="$2"
+    local deps="$3"
+    
+    validate_ticket "$ticket"
+    
+    if [ "$relation" = "blocked-by" ]; then
+        validate_ticket "$deps"
+        echo -e "${WORKING} Adding dependency: $ticket blocked by $deps"
+        
+        # Add to blocked_by array for ticket
+        python3 -c "
+import json
+with open('$DEPS_FILE', 'r') as f:
+    data = json.load(f)
+if '$ticket' not in data:
+    data['$ticket'] = {'blocked_by': [], 'blocks': []}
+if '$deps' not in data['$ticket']['blocked_by']:
+    data['$ticket']['blocked_by'].append('$deps')
+    
+# Also add reverse relationship  
+if '$deps' not in data:
+    data['$deps'] = {'blocked_by': [], 'blocks': []}
+if '$ticket' not in data['$deps']['blocks']:
+    data['$deps']['blocks'].append('$ticket')
+    
+with open('$DEPS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+        echo -e "${SUCCESS} Added: $ticket blocked by $deps"
+        
+    elif [ "$relation" = "blocks" ]; then
+        echo -e "${WORKING} Adding blocks relationship: $ticket blocks $deps"
+        
+        # Split comma-separated dependencies
+        IFS=',' read -ra DEP_ARRAY <<< "$deps"
+        for dep in "${DEP_ARRAY[@]}"; do
+            dep=$(echo "$dep" | xargs)  # trim whitespace
+            validate_ticket "$dep"
+            
+            python3 -c "
+import json
+with open('$DEPS_FILE', 'r') as f:
+    data = json.load(f)
+if '$ticket' not in data:
+    data['$ticket'] = {'blocked_by': [], 'blocks': []}
+if '$dep' not in data['$ticket']['blocks']:
+    data['$ticket']['blocks'].append('$dep')
+    
+# Also add reverse relationship
+if '$dep' not in data:
+    data['$dep'] = {'blocked_by': [], 'blocks': []}
+if '$ticket' not in data['$dep']['blocked_by']:
+    data['$dep']['blocked_by'].append('$ticket')
+    
+with open('$DEPS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+            echo -e "${SUCCESS} Added: $ticket blocks $dep"
+        done
+    else
+        echo -e "${ERROR} Invalid relation: $relation (use 'blocked-by' or 'blocks')"
+        exit 1
+    fi
+}
+
+remove_dependency() {
+    local ticket="$1"
+    local dep="$2"
+    
+    validate_ticket "$ticket"
+    validate_ticket "$dep"
+    
+    echo -e "${WORKING} Removing dependency between $ticket and $dep"
+    
+    python3 -c "
+import json
+with open('$DEPS_FILE', 'r') as f:
+    data = json.load(f)
+
+removed = False
+# Remove from blocked_by
+if '$ticket' in data and '$dep' in data['$ticket'].get('blocked_by', []):
+    data['$ticket']['blocked_by'].remove('$dep')
+    removed = True
+    
+# Remove from blocks  
+if '$dep' in data and '$ticket' in data['$dep'].get('blocks', []):
+    data['$dep']['blocks'].remove('$ticket')
+    removed = True
+    
+# Remove reverse relationships
+if '$dep' in data and '$ticket' in data['$dep'].get('blocked_by', []):
+    data['$dep']['blocked_by'].remove('$ticket')
+    removed = True
+    
+if '$ticket' in data and '$dep' in data['$ticket'].get('blocks', []):
+    data['$ticket']['blocks'].remove('$dep')
+    removed = True
+
+with open('$DEPS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+
+print('true' if removed else 'false')
+"
+    
+    if [ "$(python3 -c "
+import json
+with open('$DEPS_FILE', 'r') as f:
+    data = json.load(f)
+removed = False
+if '$ticket' in data and '$dep' in data['$ticket'].get('blocked_by', []):
+    removed = True
+elif '$dep' in data and '$ticket' in data['$dep'].get('blocks', []):
+    removed = True
+print('true' if removed else 'false')
+")" = "true" ]; then
+        echo -e "${SUCCESS} Removed dependency between $ticket and $dep"
+    else
+        echo -e "${WARNING} No dependency found between $ticket and $dep"
+    fi
+}
+
+list_dependencies() {
+    local ticket="$1"
+    validate_ticket "$ticket"
+    
+    echo -e "${INFO} ${BLUE}Dependencies for $ticket:${NC}"
+    
+    python3 -c "
+import json
+try:
+    with open('$DEPS_FILE', 'r') as f:
+        data = json.load(f)
+    
+    if '$ticket' not in data:
+        print('  No dependencies recorded')
+        exit()
+    
+    ticket_data = data['$ticket']
+    
+    blocked_by = ticket_data.get('blocked_by', [])
+    blocks = ticket_data.get('blocks', [])
+    
+    if blocked_by:
+        print('  🚫 Blocked by:')
+        for dep in blocked_by:
+            print(f'    - {dep}')
+    
+    if blocks:
+        print('  🔒 Blocks:')
+        for dep in blocks:
+            print(f'    - {dep}')
+    
+    if not blocked_by and not blocks:
+        print('  No dependencies recorded')
+        
+except Exception as e:
+    print(f'  Error reading dependencies: {e}')
+"
+}
+
+check_ready() {
+    local ticket="$1"
+    validate_ticket "$ticket"
+    
+    # Get blocked_by dependencies
+    local blockers=$(python3 -c "
+import json
+try:
+    with open('$DEPS_FILE', 'r') as f:
+        data = json.load(f)
+    
+    if '$ticket' not in data:
+        print('')
+        exit()
+    
+    blocked_by = data['$ticket'].get('blocked_by', [])
+    print(','.join(blocked_by))
+except:
+    print('')
+")
+
+    if [ -z "$blockers" ]; then
+        echo -e "${SUCCESS} $ticket is ready (no blockers)"
+        return 0
+    else
+        IFS=',' read -ra BLOCKER_ARRAY <<< "$blockers"
+        all_complete=true
+        for blocker in "${BLOCKER_ARRAY[@]}"; do
+            status=$(get_ticket_status "$blocker")
+            if [ "$status" = "Done" ] || [ "$status" = "Canceled" ]; then
+                echo -e "  ${SUCCESS} $blocker ($status) ✓"
+            else
+                echo -e "  ${ERROR} $blocker ($status) ✗"
+                all_complete=false
+            fi
+        done
+        
+        if [ "$all_complete" = true ]; then
+            echo -e "${SUCCESS} $ticket is ready (all blockers complete)"
+            return 0
+        else
+            echo -e "${ERROR} $ticket is blocked by active dependencies"
+            return 1
+        fi
+    fi
+}
+
+list_ready_tickets() {
+    echo -e "${INFO} ${BLUE}Ready tickets (no active blockers):${NC}"
+    
+    python3 -c "
+import json
+import subprocess
+
+try:
+    with open('$DEPS_FILE', 'r') as f:
+        data = json.load(f)
+    
+    ready_tickets = []
+    
+    for ticket, deps in data.items():
+        blocked_by = deps.get('blocked_by', [])
+        
+        if not blocked_by:
+            ready_tickets.append(ticket)
+            continue
+            
+        # Check if all blockers are complete
+        all_complete = True
+        for blocker in blocked_by:
+            try:
+                result = subprocess.run(['saber.py', 'get', blocker], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    status = json.loads(result.stdout)['state']['name']
+                    if status not in ['Done', 'Canceled']:
+                        all_complete = False
+                        break
+                else:
+                    all_complete = False
+                    break
+            except:
+                all_complete = False
+                break
+        
+        if all_complete:
+            ready_tickets.append(ticket)
+    
+    if ready_tickets:
+        for ticket in sorted(ready_tickets):
+            print(f'  ✅ {ticket}')
+    else:
+        print('  No ready tickets found')
+        
+except Exception as e:
+    print(f'  Error: {e}')
+"
+}
+
+show_dependency_tree() {
+    local ticket="$1"
+    validate_ticket "$ticket"
+    
+    echo -e "${INFO} ${BLUE}Dependency tree for $ticket:${NC}"
+    
+    python3 -c "
+import json
+
+def show_tree(ticket, data, visited=set(), level=0):
+    if ticket in visited:
+        print('  ' * level + f'🔄 {ticket} (circular reference)')
+        return
+    
+    visited.add(ticket)
+    indent = '  ' * level
+    
+    if ticket not in data:
+        print(f'{indent}📋 {ticket} (no dependencies)')
+        return
+    
+    ticket_data = data[ticket]
+    blocked_by = ticket_data.get('blocked_by', [])
+    blocks = ticket_data.get('blocks', [])
+    
+    status_symbol = '📋'
+    try:
+        import subprocess
+        result = subprocess.run(['saber.py', 'get', ticket], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            status = json.loads(result.stdout)['state']['name']
+            status_symbol = '✅' if status == 'Done' else '🔄' if status == 'In Progress' else '📋'
+    except:
+        pass
+    
+    print(f'{indent}{status_symbol} {ticket}')
+    
+    if blocked_by:
+        print(f'{indent}  └── Blocked by:')
+        for dep in blocked_by:
+            show_tree(dep, data, visited.copy(), level + 2)
+    
+    if blocks:
+        print(f'{indent}  └── Blocks:')
+        for dep in blocks:
+            show_tree(dep, data, visited.copy(), level + 2)
+
+try:
+    with open('$DEPS_FILE', 'r') as f:
+        data = json.load(f)
+    
+    show_tree('$ticket', data)
+    
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+clear_dependencies() {
+    local ticket="$1"
+    validate_ticket "$ticket"
+    
+    echo -e "${WORKING} Clearing all dependencies for $ticket"
+    
+    python3 -c "
+import json
+with open('$DEPS_FILE', 'r') as f:
+    data = json.load(f)
+
+if '$ticket' in data:
+    # Remove reverse relationships
+    blocked_by = data['$ticket'].get('blocked_by', [])
+    blocks = data['$ticket'].get('blocks', [])
+    
+    # Remove this ticket from others' blocks lists
+    for dep in blocked_by:
+        if dep in data and '$ticket' in data[dep].get('blocks', []):
+            data[dep]['blocks'].remove('$ticket')
+    
+    # Remove this ticket from others' blocked_by lists        
+    for dep in blocks:
+        if dep in data and '$ticket' in data[dep].get('blocked_by', []):
+            data[dep]['blocked_by'].remove('$ticket')
+    
+    # Clear this ticket's dependencies
+    del data['$ticket']
+
+with open('$DEPS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+    echo -e "${SUCCESS} Cleared all dependencies for $ticket"
+}
+
+# Main command handling
+case "$command" in
+    "add")
+        if [ $# -ne 4 ]; then
+            echo -e "${ERROR} Usage: ./depend add <ticket> <blocked-by|blocks> <dependencies>"
+            exit 1
+        fi
+        add_dependency "$ticket" "$relation" "$dependencies"
+        ;;
+    "remove")
+        if [ $# -ne 3 ]; then
+            echo -e "${ERROR} Usage: ./depend remove <ticket> <dependency>"
+            exit 1
+        fi
+        remove_dependency "$ticket" "$relation"
+        ;;
+    "list")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./depend list <ticket>"
+            exit 1
+        fi
+        list_dependencies "$ticket"
+        ;;
+    "check")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./depend check <ticket>"
+            exit 1
+        fi
+        check_ready "$ticket"
+        ;;
+    "ready")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./depend ready"
+            exit 1
+        fi
+        list_ready_tickets
+        ;;
+    "tree")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./depend tree <ticket>"
+            exit 1
+        fi
+        show_dependency_tree "$ticket"
+        ;;
+    "clear")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./depend clear <ticket>"
+            exit 1
+        fi
+        clear_dependencies "$ticket"
+        ;;
+    *)
+        echo -e "${ERROR} Unknown command: $command"
+        echo -e "${INFO} Use ./depend without arguments for help"
+        exit 1
+        ;;
+esac

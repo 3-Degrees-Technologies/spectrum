@@ -1,0 +1,895 @@
+#!/bin/bash
+# workload-viz - Agent workload visualization and capacity analysis tool
+# Provides comprehensive agent assignment analysis and capacity planning
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+AGENT="👤"
+QUEUE="📝"
+CAPACITY="📊"
+BUSY="🔥"
+
+# Files
+AGENT_REGISTRY="agent-registry.json"
+DEPS_FILE=".ticket_dependencies.json"
+
+# Usage check
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./workload-viz <command> [arguments...]"
+    echo -e "${INFO} Commands:"
+    echo -e "${INFO}   overview                         # Complete workload overview"
+    echo -e "${INFO}   agent <agent_name>               # Detailed agent workload"
+    echo -e "${INFO}   capacity                         # Team capacity analysis"
+    echo -e "${INFO}   queues                           # All agent queues summary"
+    echo -e "${INFO}   conflicts                        # Detect workload conflicts"
+    echo -e "${INFO}   ready <agent_name>               # Ready work for specific agent"
+    echo -e "${INFO}   balance                          # Team workload balance analysis"
+    echo ""
+    echo -e "${INFO} Examples:"
+    echo -e "${INFO}   ./workload-viz overview"
+    echo -e "${INFO}   ./workload-viz agent Agent-Sam"
+    echo -e "${INFO}   ./workload-viz capacity"
+    echo -e "${INFO}   ./workload-viz ready Agent-Sam"
+    exit 1
+fi
+
+command="$1"
+agent_name="$2"
+
+# Initialize files if they don't exist
+if [ ! -f "$AGENT_REGISTRY" ]; then
+    echo '{}' > "$AGENT_REGISTRY"
+fi
+
+if [ ! -f "$DEPS_FILE" ]; then
+    echo '{}' > "$DEPS_FILE"
+fi
+
+# Helper functions
+get_ticket_info() {
+    local ticket_id="$1"
+    python3 -c "
+import json
+import subprocess
+try:
+    result = subprocess.run(['python3', './.tools/saber.py', 'get', '$ticket_id'], 
+                          capture_output=True, text=True, timeout=5)
+    if result.returncode == 0:
+        data = json.loads(result.stdout)
+        status = data['state']['name']
+        title = data['title'][:40] + ('...' if len(data['title']) > 40 else '')
+        assignee = data.get('assignee', {})
+        assignee_name = assignee.get('name', 'Unassigned') if assignee else 'Unassigned'
+        print(f'{status}|{title}|{assignee_name}')
+    else:
+        print('Unknown|Unknown Title|Unknown')
+except:
+    print('Unknown|Unknown Title|Unknown')
+"
+}
+
+get_status_symbol() {
+    case "$1" in
+        "Done") echo "✅" ;;
+        "In Progress") echo "🔄" ;;
+        "Todo") echo "📋" ;;
+        "Canceled") echo "❌" ;;
+        *) echo "❓" ;;
+    esac
+}
+
+show_overview() {
+    echo -e "${CAPACITY} ${BLUE}Team Workload Overview${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:30] + ('...' if len(data['title']) > 30 else '')
+            return status, title
+    except:
+        pass
+    return 'Unknown', 'Unknown Title'
+
+def get_status_symbol(status):
+    if status == 'Done':
+        return '✅'
+    elif status == 'In Progress':
+        return '🔄'
+    elif status == 'Todo':
+        return '📋'
+    elif status == 'Canceled':
+        return '❌'
+    else:
+        return '❓'
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    if not agents:
+        print('${INFO} No agents in registry')
+        exit()
+    
+    total_active = 0
+    total_queued = 0
+    agent_summary = []
+    
+    for agent_name, data in agents.items():
+        active_tickets = data.get('active_tickets', [])
+        queued_tickets = data.get('queued_tickets', [])
+        status = data.get('status', 'unknown')
+        current_focus = data.get('current_focus', 'No focus set')
+        
+        total_active += len(active_tickets)
+        total_queued += len(queued_tickets)
+        
+        # Determine agent status indicator
+        if status == 'busy' and active_tickets:
+            status_indicator = '🔥'
+        elif status == 'available':
+            status_indicator = '✅'
+        else:
+            status_indicator = '❓'
+        
+        agent_summary.append({
+            'name': agent_name,
+            'status': status,
+            'status_indicator': status_indicator,
+            'active_count': len(active_tickets),
+            'queued_count': len(queued_tickets),
+            'focus': current_focus,
+            'active_tickets': active_tickets,
+            'queued_tickets': queued_tickets
+        })
+    
+    print(f'${CAPACITY} Team Summary:')
+    print(f'  👥 Total agents: {len(agents)}')
+    print(f'  🔄 Total active tickets: {total_active}')
+    print(f'  📝 Total queued tickets: {total_queued}')
+    print(f'  📊 Average workload: {(total_active + total_queued) / len(agents):.1f} tickets/agent')
+    print()
+    
+    print('${AGENT} Agent Status:')
+    for agent in sorted(agent_summary, key=lambda x: x['active_count'] + x['queued_count'], reverse=True):
+        total_load = agent['active_count'] + agent['queued_count']
+        load_indicator = '🔥' if total_load > 5 else '⚠️' if total_load > 2 else '✅'
+        
+        print(f'  {agent['status_indicator']} {agent['name']} ({agent['status']})')
+        print(f'    {load_indicator} Load: {agent['active_count']} active + {agent['queued_count']} queued = {total_load} total')
+        print(f'    🎯 Focus: {agent['focus']}')
+        
+        # Show current active work
+        if agent['active_tickets']:
+            for ticket in agent['active_tickets'][:2]:  # Show first 2
+                status, title = get_ticket_info(ticket)
+                symbol = get_status_symbol(status)
+                print(f'    {symbol} {ticket} - {title}')
+            if len(agent['active_tickets']) > 2:
+                print(f'    ... and {len(agent['active_tickets']) - 2} more active')
+        
+        print()
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_agent_detail() {
+    local agent="$1"
+    
+    if [ -z "$agent" ]; then
+        echo -e "${ERROR} Agent name required"
+        exit 1
+    fi
+    
+    echo -e "${AGENT} ${PURPLE}Detailed Workload for $agent${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:50] + ('...' if len(data['title']) > 50 else '')
+            return status, title
+    except:
+        pass
+    return 'Unknown', 'Unknown Title'
+
+def get_status_symbol(status):
+    if status == 'Done':
+        return '✅'
+    elif status == 'In Progress':
+        return '🔄'
+    elif status == 'Todo':
+        return '📋'
+    elif status == 'Canceled':
+        return '❌'
+    else:
+        return '❓'
+
+def check_dependencies(ticket_id, deps_data):
+    if ticket_id not in deps_data:
+        return True, []
+    
+    blocked_by = deps_data[ticket_id].get('blocked_by', [])
+    if not blocked_by:
+        return True, []
+    
+    # Check if any blockers are still active
+    active_blockers = []
+    for blocker in blocked_by:
+        status, _ = get_ticket_info(blocker)
+        if status not in ['Done', 'Canceled']:
+            active_blockers.append((blocker, status))
+    
+    return len(active_blockers) == 0, active_blockers
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    if '$agent' not in agents:
+        print('${ERROR} Agent not found in registry')
+        exit(1)
+    
+    agent_data = agents['$agent']
+    active_tickets = agent_data.get('active_tickets', [])
+    queued_tickets = agent_data.get('queued_tickets', [])
+    status = agent_data.get('status', 'unknown')
+    current_focus = agent_data.get('current_focus', 'No focus set')
+    domain = agent_data.get('domain', 'Not specified')
+    last_updated = agent_data.get('last_updated', 'Unknown')
+    
+    print(f'${INFO} Agent Profile:')
+    print(f'  📋 Status: {status}')
+    print(f'  🎯 Current Focus: {current_focus}')
+    print(f'  🔧 Domain: {domain}')
+    print(f'  📅 Last Updated: {last_updated}')
+    print()
+    
+    # Active work
+    print(f'${WORKING} Active Work ({len(active_tickets)} tickets):')
+    if not active_tickets:
+        print('  ✨ No active tickets')
+    else:
+        for i, ticket in enumerate(active_tickets, 1):
+            status, title = get_ticket_info(ticket)
+            symbol = get_status_symbol(status)
+            ready, blockers = check_dependencies(ticket, deps_data)
+            
+            block_indicator = '' if ready else ' 🚫'
+            print(f'  {i}. {symbol} {ticket} - {title}{block_indicator}')
+            
+            if not ready:
+                print(f'     🚫 Blocked by: {', '.join([f'{b[0]} ({b[1]})' for b in blockers])}')
+    print()
+    
+    # Queued work
+    print(f'${QUEUE} Queued Work ({len(queued_tickets)} tickets):')
+    if not queued_tickets:
+        print('  ✨ No queued tickets')
+    else:
+        for i, ticket in enumerate(queued_tickets, 1):
+            status, title = get_ticket_info(ticket)
+            symbol = get_status_symbol(status)
+            ready, blockers = check_dependencies(ticket, deps_data)
+            
+            block_indicator = '' if ready else ' 🚫'
+            priority_indicator = '🔥' if i <= 2 else '📋'
+            
+            print(f'  {priority_indicator} {i}. {symbol} {ticket} - {title}{block_indicator}')
+            
+            if not ready:
+                print(f'       🚫 Blocked by: {', '.join([f'{b[0]} ({b[1]})' for b in blockers])}')
+    
+    # Capacity analysis
+    total_load = len(active_tickets) + len(queued_tickets)
+    print()
+    print(f'${CAPACITY} Capacity Analysis:')
+    print(f'  📊 Total Load: {total_load} tickets')
+    
+    if total_load == 0:
+        print('  ✅ Available for new work')
+    elif total_load <= 20:
+        print('  ✅ Light load - can take more work')
+    elif total_load <= 50:
+        print('  ⚠️  Moderate load - consider priority before adding work')
+    else:
+        print('  🔥 Heavy load - avoid adding new work')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_capacity_analysis() {
+    echo -e "${CAPACITY} ${CYAN}Team Capacity Analysis${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            return status
+    except:
+        pass
+    return 'Unknown'
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    if not agents:
+        print('${INFO} No agents in registry')
+        exit()
+    
+    capacity_data = []
+    total_capacity = 0
+    available_agents = 0
+    overloaded_agents = 0
+    
+    for agent_name, data in agents.items():
+        active_tickets = data.get('active_tickets', [])
+        queued_tickets = data.get('queued_tickets', [])
+        status = data.get('status', 'unknown')
+        
+        total_load = len(active_tickets) + len(queued_tickets)
+        
+        # Capacity assessment
+        if total_load == 0:
+            capacity_status = 'available'
+            capacity_symbol = '✅'
+            available_agents += 1
+        elif total_load <= 20:
+            capacity_status = 'light'
+            capacity_symbol = '✅'
+        elif total_load <= 50:
+            capacity_status = 'moderate'
+            capacity_symbol = '⚠️'
+        else:
+            capacity_status = 'overloaded'
+            capacity_symbol = '🔥'
+            overloaded_agents += 1
+        
+        total_capacity += max(0, 50 - total_load)  # Assuming 50-ticket optimal capacity
+        
+        capacity_data.append({
+            'name': agent_name,
+            'total_load': total_load,
+            'active': len(active_tickets),
+            'queued': len(queued_tickets),
+            'status': status,
+            'capacity_status': capacity_status,
+            'capacity_symbol': capacity_symbol,
+            'remaining_capacity': max(0, 5 - total_load)
+        })
+    
+    # Sort by total load (highest first)
+    capacity_data.sort(key=lambda x: x['total_load'], reverse=True)
+    
+    print(f'${CAPACITY} Team Capacity Summary:')
+    print(f'  👥 Total agents: {len(agents)}')
+    print(f'  ✅ Available agents: {available_agents}')
+    print(f'  🔥 Overloaded agents: {overloaded_agents}')
+    print(f'  📊 Team remaining capacity: {total_capacity} tickets')
+    print()
+    
+    print('${AGENT} Individual Capacity:')
+    for agent in capacity_data:
+        print(f'  {agent['capacity_symbol']} {agent['name']} ({agent['capacity_status']})')
+        print(f'    📊 Load: {agent['active']} active + {agent['queued']} queued = {agent['total_load']} total')
+        print(f'    🎯 Remaining capacity: {agent['remaining_capacity']} tickets')
+        print()
+    
+    # Recommendations
+    print('${INFO} Recommendations:')
+    if available_agents > 0:
+        available_list = [a['name'] for a in capacity_data if a['capacity_status'] == 'available']
+        print(f'  ✅ Assign new work to: {', '.join(available_list)}')
+    
+    if overloaded_agents > 0:
+        overloaded_list = [a['name'] for a in capacity_data if a['capacity_status'] == 'overloaded']
+        print(f'  🔥 Consider redistributing work from: {', '.join(overloaded_list)}')
+    
+    light_load = [a['name'] for a in capacity_data if a['capacity_status'] == 'light']
+    if light_load:
+        print(f'  📋 Can handle additional work: {', '.join(light_load)}')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_queues_summary() {
+    echo -e "${QUEUE} ${YELLOW}Agent Queues Summary${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:35] + ('...' if len(data['title']) > 35 else '')
+            return status, title
+    except:
+        pass
+    return 'Unknown', 'Unknown Title'
+
+def get_status_symbol(status):
+    if status == 'Done':
+        return '✅'
+    elif status == 'In Progress':
+        return '🔄'
+    elif status == 'Todo':
+        return '📋'
+    elif status == 'Canceled':
+        return '❌'
+    else:
+        return '❓'
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    if not agents:
+        print('${INFO} No agents in registry')
+        exit()
+    
+    total_queued = 0
+    
+    for agent_name, data in agents.items():
+        queued_tickets = data.get('queued_tickets', [])
+        current_focus = data.get('current_focus', 'No focus set')
+        
+        total_queued += len(queued_tickets)
+        
+        print(f'${AGENT} {agent_name}:')
+        print(f'  🎯 Focus: {current_focus}')
+        print(f'  📝 Queue length: {len(queued_tickets)} tickets')
+        
+        if not queued_tickets:
+            print('  ✨ No queued work')
+        else:
+            # Show first 3 tickets in queue
+            for i, ticket in enumerate(queued_tickets[:3], 1):
+                status, title = get_ticket_info(ticket)
+                symbol = get_status_symbol(status)
+                priority_indicator = '🔥' if i == 1 else '⚠️' if i == 2 else '📋'
+                
+                print(f'  {priority_indicator} {i}. {symbol} {ticket} - {title}')
+            
+            if len(queued_tickets) > 3:
+                print(f'  ... and {len(queued_tickets) - 3} more in queue')
+        
+        print()
+    
+    print(f'${CAPACITY} Queue Summary:')
+    print(f'  📝 Total queued tickets: {total_queued}')
+    print(f'  📊 Average queue length: {total_queued / len(agents):.1f} tickets/agent')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+detect_conflicts() {
+    echo -e "${WARNING} ${RED}Workload Conflicts Detection${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:40] + ('...' if len(data['title']) > 40 else '')
+            assignee = data.get('assignee', {})
+            assignee_name = assignee.get('name', 'Unassigned') if assignee else 'Unassigned'
+            return status, title, assignee_name
+    except:
+        pass
+    return 'Unknown', 'Unknown Title', 'Unknown'
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    if not agents:
+        print('${INFO} No agents in registry')
+        exit()
+    
+    conflicts = []
+    
+    # Check for assignment conflicts
+    all_tickets = {}
+    for agent_name, data in agents.items():
+        active_tickets = data.get('active_tickets', [])
+        queued_tickets = data.get('queued_tickets', [])
+        
+        for ticket in active_tickets + queued_tickets:
+            if ticket in all_tickets:
+                conflicts.append({
+                    'type': 'duplicate_assignment',
+                    'ticket': ticket,
+                    'agents': [all_tickets[ticket], agent_name]
+                })
+            else:
+                all_tickets[ticket] = agent_name
+    
+    # Check for Linear vs Registry conflicts
+    linear_conflicts = []
+    for ticket, registry_agent in all_tickets.items():
+        status, title, linear_assignee = get_ticket_info(ticket)
+        
+        if linear_assignee != 'Unassigned' and linear_assignee != registry_agent:
+            linear_conflicts.append({
+                'ticket': ticket,
+                'title': title,
+                'registry_agent': registry_agent,
+                'linear_assignee': linear_assignee
+            })
+    
+    # Check for overload situations
+    overloaded = []
+    for agent_name, data in agents.items():
+        active_tickets = data.get('active_tickets', [])
+        queued_tickets = data.get('queued_tickets', [])
+        total_load = len(active_tickets) + len(queued_tickets)
+        
+        if total_load > 6:  # Threshold for overload
+            overloaded.append({
+                'agent': agent_name,
+                'load': total_load,
+                'active': len(active_tickets),
+                'queued': len(queued_tickets)
+            })
+    
+    # Report conflicts
+    if conflicts:
+        print('${ERROR} Duplicate Assignments:')
+        for conflict in conflicts:
+            print(f'  ❌ {conflict['ticket']} assigned to multiple agents:')
+            print(f'     👥 {', '.join(conflict['agents'])}')
+        print()
+    
+    if linear_conflicts:
+        print('${WARNING} Linear vs Registry Conflicts:')
+        for conflict in linear_conflicts:
+            print(f'  ⚠️  {conflict['ticket']} - {conflict['title']}')
+            print(f'     📋 Registry: {conflict['registry_agent']}')
+            print(f'     🎯 Linear: {conflict['linear_assignee']}')
+        print()
+    
+    if overloaded:
+        print('${BUSY} Overloaded Agents:')
+        for agent in overloaded:
+            print(f'  🔥 {agent['agent']}: {agent['load']} total tickets')
+            print(f'     ({agent['active']} active + {agent['queued']} queued)')
+        print()
+    
+    if not conflicts and not linear_conflicts and not overloaded:
+        print('✅ No workload conflicts detected')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_ready_work() {
+    local agent="$1"
+    
+    if [ -z "$agent" ]; then
+        echo -e "${ERROR} Agent name required"
+        exit 1
+    fi
+    
+    echo -e "${SUCCESS} ${GREEN}Ready Work for $agent${NC}"
+    echo ""
+    
+    # First show what's in their queue
+    python3 -c "
+import json
+import subprocess
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:50] + ('...' if len(data['title']) > 50 else '')
+            return status, title
+    except:
+        pass
+    return 'Unknown', 'Unknown Title'
+
+def get_status_symbol(status):
+    if status == 'Done':
+        return '✅'
+    elif status == 'In Progress':
+        return '🔄'
+    elif status == 'Todo':
+        return '📋'
+    elif status == 'Canceled':
+        return '❌'
+    else:
+        return '❓'
+
+def check_dependencies(ticket_id, deps_data):
+    if ticket_id not in deps_data:
+        return True, []
+    
+    blocked_by = deps_data[ticket_id].get('blocked_by', [])
+    if not blocked_by:
+        return True, []
+    
+    # Check if any blockers are still active
+    active_blockers = []
+    for blocker in blocked_by:
+        status, _ = get_ticket_info(blocker)
+        if status not in ['Done', 'Canceled']:
+            active_blockers.append((blocker, status))
+    
+    return len(active_blockers) == 0, active_blockers
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    if '$agent' not in agents:
+        print('${ERROR} Agent not found in registry')
+        exit(1)
+    
+    agent_data = agents['$agent']
+    active_tickets = agent_data.get('active_tickets', [])
+    queued_tickets = agent_data.get('queued_tickets', [])
+    
+    print('${QUEUE} Agent Queue (${len(queued_tickets)} tickets):')
+    ready_count = 0
+    
+    if not queued_tickets:
+        print('  ✨ No tickets in queue')
+    else:
+        for i, ticket in enumerate(queued_tickets, 1):
+            status, title = get_ticket_info(ticket)
+            symbol = get_status_symbol(status)
+            ready, blockers = check_dependencies(ticket, deps_data)
+            
+            if ready:
+                ready_indicator = '✅'
+                ready_count += 1
+            else:
+                ready_indicator = '🚫'
+            
+            priority_indicator = '🔥' if i <= 2 else '📋'
+            
+            print(f'  {priority_indicator} {ready_indicator} {i}. {symbol} {ticket} - {title}')
+            
+            if not ready:
+                print(f'       🚫 Blocked by: {', '.join([f'{b[0]} ({b[1]})' for b in blockers])}')
+    
+    print()
+    print(f'${SUCCESS} Summary:')
+    print(f'  📊 Total in queue: {len(queued_tickets)}')
+    print(f'  ✅ Ready to work: {ready_count}')
+    print(f'  🚫 Blocked: {len(queued_tickets) - ready_count}')
+    
+    if ready_count > 0:
+        print(f'  🎯 Next recommended: First ready ticket in queue')
+    elif len(queued_tickets) > 0:
+        print(f'  ⚠️  All queued work is blocked')
+    else:
+        print(f'  📋 Agent available for new assignments')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_balance_analysis() {
+    echo -e "${CAPACITY} ${PURPLE}Team Workload Balance Analysis${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import statistics
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    if not agents:
+        print('${INFO} No agents in registry')
+        exit()
+    
+    workloads = []
+    agent_loads = []
+    
+    for agent_name, data in agents.items():
+        active_tickets = data.get('active_tickets', [])
+        queued_tickets = data.get('queued_tickets', [])
+        total_load = len(active_tickets) + len(queued_tickets)
+        
+        workloads.append(total_load)
+        agent_loads.append({
+            'name': agent_name,
+            'load': total_load,
+            'active': len(active_tickets),
+            'queued': len(queued_tickets)
+        })
+    
+    # Calculate statistics
+    avg_load = statistics.mean(workloads)
+    median_load = statistics.median(workloads)
+    
+    if len(workloads) > 1:
+        stdev_load = statistics.stdev(workloads)
+    else:
+        stdev_load = 0
+    
+    min_load = min(workloads)
+    max_load = max(workloads)
+    
+    print(f'${CAPACITY} Workload Distribution:')
+    print(f'  📊 Average: {avg_load:.1f} tickets/agent')
+    print(f'  📊 Median: {median_load:.1f} tickets/agent')
+    print(f'  📊 Standard Deviation: {stdev_load:.1f}')
+    print(f'  📊 Range: {min_load} - {max_load} tickets')
+    print()
+    
+    # Balance assessment
+    balance_score = 'excellent' if stdev_load < 1 else 'good' if stdev_load < 2 else 'poor'
+    balance_symbol = '✅' if balance_score == 'excellent' else '⚠️' if balance_score == 'good' else '🔥'
+    
+    print(f'${INFO} Balance Assessment: {balance_symbol} {balance_score.upper()}')
+    
+    if balance_score == 'poor':
+        print('  🔥 Significant workload imbalance detected')
+        print('  💡 Consider redistributing work between agents')
+    elif balance_score == 'good':
+        print('  ⚠️  Minor workload imbalance')
+        print('  💡 Monitor and adjust assignments as needed')
+    else:
+        print('  ✅ Workload is well balanced across the team')
+    
+    print()
+    
+    # Show sorted by workload
+    agent_loads.sort(key=lambda x: x['load'], reverse=True)
+    
+    print('${AGENT} Workload Ranking:')
+    for i, agent in enumerate(agent_loads, 1):
+        deviation = agent['load'] - avg_load
+        deviation_indicator = '🔥' if deviation > 2 else '⚠️' if deviation > 1 else '✅' if abs(deviation) <= 1 else '📉'
+        
+        print(f'  {i}. {deviation_indicator} {agent['name']}: {agent['load']} tickets')
+        print(f'     ({agent['active']} active + {agent['queued']} queued, {deviation:+.1f} from avg)')
+    
+    # Recommendations
+    if balance_score == 'poor':
+        print()
+        print('${INFO} Rebalancing Recommendations:')
+        
+        # Find heavily loaded agents
+        overloaded = [a for a in agent_loads if a['load'] > avg_load + 2]
+        underloaded = [a for a in agent_loads if a['load'] < avg_load - 1]
+        
+        if overloaded and underloaded:
+            print(f'  📋 Move work from: {', '.join([a['name'] for a in overloaded])}')
+            print(f'  📋 Move work to: {', '.join([a['name'] for a in underloaded])}')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+# Main command handling
+case "$command" in
+    "overview")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz overview"
+            exit 1
+        fi
+        show_overview
+        ;;
+    "agent")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz agent <agent_name>"
+            exit 1
+        fi
+        show_agent_detail "$agent_name"
+        ;;
+    "capacity")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz capacity"
+            exit 1
+        fi
+        show_capacity_analysis
+        ;;
+    "queues")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz queues"
+            exit 1
+        fi
+        show_queues_summary
+        ;;
+    "conflicts")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz conflicts"
+            exit 1
+        fi
+        detect_conflicts
+        ;;
+    "ready")
+        if [ $# -ne 2 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz ready <agent_name>"
+            exit 1
+        fi
+        show_ready_work "$agent_name"
+        ;;
+    "balance")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./workload-viz balance"
+            exit 1
+        fi
+        show_balance_analysis
+        ;;
+    *)
+        echo -e "${ERROR} Unknown command: $command"
+        echo -e "${INFO} Use ./workload-viz without arguments for help"
+        exit 1
+        ;;
+esac

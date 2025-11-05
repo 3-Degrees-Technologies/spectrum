@@ -48,9 +48,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --help           Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0 PLY-48                    # Auto-detect validation mode"
-            echo "  $0 PLY-48 --mode=adaptive   # Use domain matrices"
-            echo "  $0 PLY-48 --verbose         # Show detailed analysis"
+            echo "  $0 CEN-48                    # Auto-detect validation mode"
+            echo "  $0 CEN-48 --mode=adaptive   # Use domain matrices"
+            echo "  $0 CEN-48 --verbose         # Show detailed analysis"
             exit 0
             ;;
         --*)
@@ -73,7 +73,7 @@ done
 # Validate ticket ID provided
 if [[ -z "$TICKET_ID" ]]; then
     echo -e "${ERROR} Usage: $0 <TICKET_ID> [OPTIONS]"
-    echo -e "${INFO} Example: $0 PLY-48 --verbose"
+    echo -e "${INFO} Example: $0 CEN-48 --verbose"
     echo -e "${INFO} Use --help for more options"
     exit 1
 fi
@@ -167,6 +167,8 @@ ticket_title=$(echo "$ticket_details" | jq -r '.title // "Unknown"')
 ticket_description=$(echo "$ticket_details" | jq -r '.description // ""')
 ticket_state=$(echo "$ticket_details" | jq -r '.state.name // "Unknown"')
 parent_id=$(echo "$ticket_details" | jq -r '.parent.identifier // null')
+children=$(echo "$ticket_details" | jq -r '.children.nodes[].identifier // empty')
+children_count=$(echo "$ticket_details" | jq -r '.children.nodes | length')
 
 echo -e "${SUCCESS} Retrieved: ${ticket_title}"
 if [[ "$VERBOSE" == true ]]; then
@@ -174,6 +176,26 @@ if [[ "$VERBOSE" == true ]]; then
     if [[ "$parent_id" != "null" ]]; then
         echo -e "${INFO} Parent: ${parent_id}"
     fi
+    if [[ "$children_count" -gt 0 ]]; then
+        echo -e "${INFO} Children (${children_count}): ${children}"
+    fi
+fi
+
+# CRITICAL: Parent ticket validation (Golden Rule check)
+if [[ "$children_count" -gt 0 ]]; then
+    echo -e "${ERROR} ${RED}PARENT TICKET DETECTED - ASSIGNMENT BLOCKED${NC}"
+    echo -e "${INFO} This ticket has ${children_count} child tickets: ${children}"
+    echo -e "${INFO} Golden Rule Violation: Tickets have EITHER work OR subtasks, NEVER both"
+    echo ""
+    echo -e "${BLUE}Required Action:${NC}"
+    echo -e "${INFO} • Parent tickets should coordinate work, not be assigned for implementation"
+    echo -e "${INFO} • Assign agents to child tickets instead:"
+    for child in $children; do
+        echo -e "${INFO}   - Assign agent to $child for focused implementation work"
+    done
+    echo ""
+    echo -e "${ERROR} ${RED}VALIDATION FAILED - DO NOT ASSIGN THIS TICKET${NC}"
+    exit 1
 fi
 
 # Initialize analysis variables (used across all modes)
@@ -211,29 +233,52 @@ if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
     }
     
     # Load domain matrices
-    declare -A business_domains
-    declare -A technical_domains
-    
     if [[ "$VERBOSE" == true ]]; then
         echo -e "${SUCCESS} Loading domain matrices..."
     fi
     
+    #EXAMPLE
     # Load business domains
-    business_domains[Authentication]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Authentication")
-    business_domains[File_Discovery]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "File Discovery")
-    business_domains[Audio_Streaming]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Audio Streaming")
-    business_domains[Playback_Control]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Playback Control")
-    business_domains[Music_Library]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Music Library")
-    business_domains[Background_Services]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Background Services")
+    # business_domains[Authentication]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Authentication")
+    # business_domains[File_Discovery]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "File Discovery")
+    # business_domains[Audio_Streaming]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Audio Streaming")
+    # business_domains[Playback_Control]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Playback Control")
+    # business_domains[Music_Library]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Music Library")
+    # business_domains[Background_Services]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Background Services")
     
     # Load technical domains
-    technical_domains[Android_UI]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Android UI")
-    technical_domains[API_Client]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "API Client")
-    technical_domains[Storage_Persistence]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Storage & Persistence")
-    technical_domains[State_Management]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "State Management")
-    technical_domains[Audio_Engine]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Audio Engine")
-    technical_domains[Background_Services_Tech]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Background Services")
-    technical_domains[Testing_Quality]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Testing & Quality")
+    # technical_domains[Android_UI]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Android UI")
+    # technical_domains[API_Client]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "API Client")
+    # technical_domains[Storage_Persistence]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Storage & Persistence")
+    # technical_domains[State_Management]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "State Management")
+    # technical_domains[Audio_Engine]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Audio Engine")
+    # technical_domains[Background_Services_Tech]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Background Services")
+    # technical_domains[Testing_Quality]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Testing & Quality")
+    
+    # Load business domains
+    declare -A business_domains
+    business_domains[Balance]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Balance")
+    business_domains[Quote]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Quote")
+    business_domains[Payout]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Payout")
+    business_domains[Routing]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Routing")
+    business_domains[Tenant]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Tenant")
+    business_domains[Auth]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Auth")
+    business_domains[Provider]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Provider")
+    business_domains[EventSourcing]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "EventSourcing")
+    business_domains[Health]=$(extract_domain_keywords "BUSINESS_DOMAINS.md" "Health")
+    
+    # Load technical domains
+    declare -A technical_domains
+    technical_domains[AWS_Lambda_Runtime]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "AWS Lambda Runtime")
+    technical_domains[Infrastructure_Automation]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Infrastructure Automation")
+    technical_domains[Database_Technology]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Database Technology")
+    technical_domains[API_Infrastructure]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "API Infrastructure")
+    technical_domains[Development_Workflow]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Development Workflow")
+    technical_domains[Local_Development]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Local Development")
+    technical_domains[Application_Logic]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Application Logic")
+    technical_domains[Integration_Patterns]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Integration Patterns")
+    technical_domains[Security_Implementation]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Security Implementation")
+    technical_domains[Observability]=$(extract_domain_keywords "TECHNICAL_DOMAINS.md" "Observability")
     
     # Domain detection
     detected_business_domains=()
@@ -305,13 +350,56 @@ if [[ "$EFFECTIVE_MODE" == "adaptive" ]]; then
         fi
     done
     
-    # Domain-based anti-patterns
+    # Integration Pattern Analysis
     business_domain_count=${#detected_business_domains[@]}
     technical_domain_count=${#detected_technical_domains[@]}
     
+    # Define known integration patterns (architectural necessities)
+    integration_pattern=""
+    is_valid_integration=false
+    
     if [[ $business_domain_count -gt 1 ]]; then
-        bad_pattern_indicators+=("Multiple Business Domains: ${detected_business_domains[*]}")
-        confidence_score=$((confidence_score - 50))
+        # Check for valid cross-domain integration patterns
+        domains_sorted=$(printf '%s\n' "${detected_business_domains[@]}" | sort | tr '\n' ' ' | sed 's/ $//')
+        
+        case "$domains_sorted" in
+            "Balance Provider")
+                integration_pattern="Provider + Balance Integration"
+                is_valid_integration=true
+                ;;
+            "EventSourcing Provider")
+                integration_pattern="EventSourcing + Provider Integration"
+                is_valid_integration=true
+                ;;
+            "Balance Quote")
+                integration_pattern="Quote + Balance Integration"
+                is_valid_integration=true
+                ;;
+            "Balance EventSourcing Provider")
+                integration_pattern="Provider + Balance + EventSourcing Integration"
+                is_valid_integration=true
+                ;;
+            "EventSourcing Payout")
+                integration_pattern="Payout + EventSourcing Integration"
+                is_valid_integration=true
+                ;;
+            "Balance Payout")
+                integration_pattern="Payout + Balance Integration"
+                is_valid_integration=true
+                ;;
+            "Provider Routing")
+                integration_pattern="Provider + Routing Integration"
+                is_valid_integration=true
+                ;;
+        esac
+        
+        if [[ "$is_valid_integration" == true ]]; then
+            good_pattern_matches+=("Cross-Domain Integration: $integration_pattern")
+            confidence_score=$((confidence_score + 15))  # Moderate bonus for valid integration
+        else
+            bad_pattern_indicators+=("Multiple Business Domains: ${detected_business_domains[*]}")
+            confidence_score=$((confidence_score - 50))
+        fi
     fi
     
     if [[ $technical_domain_count -gt 4 ]]; then
@@ -378,16 +466,28 @@ if [[ "$EFFECTIVE_MODE" == "adaptive" || "$EFFECTIVE_MODE" == "enhanced" ]]; the
         confidence_score=$((confidence_score + 15))
     fi
     
+    # Pattern 5: Database Infrastructure
+    if echo "$ticket_description" | grep -iq -E "(database|schema|migration|table)" &&
+       echo "$ticket_description" | grep -iq -E "(add|create|update|implement)" &&
+       echo "$ticket_description" | grep -iq -E "(column|constraint|index|foreign key|migration script)" &&
+       ! echo "$ticket_description" | grep -iq -E "(research.*and.*implement|design.*and.*build)"; then
+        good_pattern_matches+=("Database Infrastructure")
+        confidence_score=$((confidence_score + 35))
+    fi
+    
     if [[ "$VERBOSE" == true ]]; then
         echo -e "${EXAMPLE} Checking for bad patterns..."
     fi
     
     # Bad Pattern Detection
     
-    # Anti-pattern 1: Phase Mixing
+    # Anti-pattern 1: Phase Mixing (but exclude TDD workflow and focused implementation)
     if echo "$ticket_description" | grep -iq -E "(research|investigate|analyze|explore)" && 
        echo "$ticket_description" | grep -iq -E "(implement|build|create)" &&
-       echo "$ticket_description" | grep -iq -E "(then|after|once|first.*then)"; then
+       echo "$ticket_description" | grep -iq -E "(then|after|once|first.*then)" &&
+       ! echo "$ticket_description" | grep -iq -E "(test.*driven|tdd)" &&
+       ! echo "$ticket_description" | grep -iq -E "(fix.*routing|investigate.*route|debug|troubleshoot)" &&
+       ! echo "$ticket_description" | grep -iq -E "(dependency.*injection|configure.*services|register.*services|di.*setup)"; then
         bad_pattern_indicators+=("Sequential Phase Mixing (Research then Implementation)")
         confidence_score=$((confidence_score - 30))
     fi
@@ -400,34 +500,93 @@ if [[ "$EFFECTIVE_MODE" == "adaptive" || "$EFFECTIVE_MODE" == "enhanced" ]]; the
         confidence_score=$((confidence_score - 25))
     fi
     
-    # Anti-pattern 3: Epic-level Scope
-    epic_indicators=0
-    if echo "$ticket_description" | grep -iq -E "(system|platform|infrastructure)"; then
-        epic_indicators=$((epic_indicators + 1))
-    fi
-    if echo "$ticket_description" | grep -iq -E "(multiple|several|various|different)"; then
-        epic_indicators=$((epic_indicators + 1))
-    fi
-    if echo "$ticket_description" | grep -iq -E "(end.*to.*end|complete.*solution|full.*stack)"; then
-        epic_indicators=$((epic_indicators + 1))
+    # Anti-pattern 3: Multiple Methods/Features (NEW DETECTION)
+    # Skip method counting if this appears to be a code example or bug fix
+    is_code_example=false
+    if echo "$ticket_description" | grep -iq -E "(\`\`\`|current code|required implementation|reference implementation|example:|fix.*code|bug.*fix)"; then
+        is_code_example=true
     fi
     
-    if [ "$epic_indicators" -gt 1 ]; then
-        bad_pattern_indicators+=("Epic-level Scope")
-        confidence_score=$((confidence_score - 35))
+    if [[ "$is_code_example" == false ]]; then
+        method_count=$(echo "$ticket_description" | grep -io -E "(Async|async)" | wc -l)
+        feature_count=0
+        
+        # Count explicit method names
+        if echo "$ticket_description" | grep -iq "AuthenticateAsync"; then feature_count=$((feature_count + 1)); fi
+        if echo "$ticket_description" | grep -iq "ValidateTokenAsync"; then feature_count=$((feature_count + 1)); fi
+        if echo "$ticket_description" | grep -iq "RefreshTokenAsync"; then feature_count=$((feature_count + 1)); fi
+        if echo "$ticket_description" | grep -iq "GetProfilesAsync"; then feature_count=$((feature_count + 1)); fi
+        if echo "$ticket_description" | grep -iq "GetProfileAsync"; then feature_count=$((feature_count + 1)); fi
+        
+        # Count other method patterns - but exclude methods in code blocks
+        description_without_code=$(echo "$ticket_description" | sed '/\`\`\`/,/\`\`\`/d')
+        additional_methods=$(echo "$description_without_code" | grep -io -E "([A-Z][a-z]+Async|Create[A-Z][a-z]+|Update[A-Z][a-z]+|Delete[A-Z][a-z]+|Get[A-Z][a-z]+)" | sort -u | wc -l)
+        total_methods=$((feature_count + additional_methods))
+        
+        if [[ $total_methods -ge 4 ]]; then
+            bad_pattern_indicators+=("Too Many Methods/Features (${total_methods}) - Break into focused subtasks")
+            confidence_score=$((confidence_score - 40))
+        elif [[ $feature_count -ge 3 && $method_count -ge 5 ]]; then
+            bad_pattern_indicators+=("Multiple API Methods (${feature_count} methods) - Consider breakdown")
+            confidence_score=$((confidence_score - 25))
+        fi
+    fi
+    
+    # Anti-pattern 4: Epic-level Scope (but exclude template boilerplate and focused fixes)
+    epic_indicators=0
+    
+    # Skip epic detection for focused bug fixes or routing fixes
+    is_focused_fix=false
+    if echo "$ticket_description" | grep -iq -E "(fix.*endpoint|fix.*routing|debug|troubleshoot|resolve.*error)"; then
+        is_focused_fix=true
+    fi
+    
+    if [[ "$is_focused_fix" == false ]]; then
+        if echo "$ticket_description" | grep -iq -E "(system|platform|infrastructure)" && 
+           ! echo "$ticket_description" | grep -iq -E "(existing.*systems|integration.*with.*existing)"; then
+            epic_indicators=$((epic_indicators + 1))
+        fi
+        if echo "$ticket_description" | grep -iq -E "(multiple|several|various|different)" &&
+           ! echo "$ticket_description" | grep -iq -E "(multiple.*requests|various.*formats)"; then
+            epic_indicators=$((epic_indicators + 1))
+        fi
+        if echo "$ticket_description" | grep -iq -E "(end.*to.*end|complete.*solution|full.*stack)"; then
+            epic_indicators=$((epic_indicators + 1))
+        fi
+        
+        if [ "$epic_indicators" -gt 1 ]; then
+            bad_pattern_indicators+=("Epic-level Scope")
+            confidence_score=$((confidence_score - 35))
+        fi
     fi
     
     # Common concerns across enhanced/adaptive
     
-    # Multiple verbs
-    verb_count=$(echo "$ticket_description" | grep -io -E "(implement|build|create|develop|design|research|analyze)" | sort -u | wc -l)
+    # Multiple verbs (but exclude template boilerplate verbs)
+    # Get raw verb matches, then filter out template context
+    raw_verbs=$(echo "$ticket_description" | grep -io -E "(implement|build|create|develop|design|research|analyze)" | sort -u)
+    verb_count=0
+    
+    # Count verbs that aren't in template boilerplate context
+    while IFS= read -r verb; do
+        if [[ -n "$verb" ]]; then
+            # Check if verb appears in template context (skip if it does)
+            if ! echo "$ticket_description" | grep -i -B2 -A2 "$verb" | grep -iq -E "(test.*driven|following.*approach|definition.*done|implementation.*approach)"; then
+                verb_count=$((verb_count + 1))
+            fi
+        fi
+    done <<< "$raw_verbs"
+    
     if [ "$verb_count" -gt 3 ]; then
         concerns+=("Multiple action verbs (${verb_count}) - verify single workflow")
     fi
     
-    # Long description
+    # Long description (but account for template boilerplate)
     desc_length=$(echo "$ticket_description" | wc -w)
-    if [ "$desc_length" -gt 200 ]; then
+    # Count template boilerplate words to adjust threshold
+    template_words=$(echo "$ticket_description" | grep -o -E "(following test-driven development|Definition of Done|Implementation Approach|Important Note for Implementation)" | wc -l)
+    adjusted_threshold=$((200 + template_words * 50))
+    if [ "$desc_length" -gt "$adjusted_threshold" ]; then
         concerns+=("Long description (${desc_length} words) - consider scope focus")
     fi
     
@@ -436,8 +595,29 @@ if [[ "$EFFECTIVE_MODE" == "adaptive" || "$EFFECTIVE_MODE" == "enhanced" ]]; the
         concerns+=("External reference numbers - clean up for Linear")
     fi
     
-    # Conjunction words (cross-domain mixing indicator)
-    if echo "$ticket_content" | grep -q -E "(and|plus|\+|also|additionally)"; then
+    # Unit tests as separate phase (should be integrated with TDD)
+    if echo "$ticket_description" | grep -iq -E "(unit.*tests.*written.*and.*passing|write.*unit.*tests|unit.*tests.*for.*all)" && 
+       ! echo "$ticket_description" | grep -iq -E "(test.*harness|bruno.*test|api.*test.*suite)"; then
+        bad_pattern_indicators+=("Unit tests as separate phase - Use TDD approach instead")
+        confidence_score=$((confidence_score - 15))
+    fi
+    
+
+    # Integration tests in DoD (should only be for Bruno test tasks)
+    if echo "$ticket_description" | grep -iq -E "(integration.*test|integration.*following)" && 
+       ! echo "$ticket_description" | grep -iq -E "(bruno|api.*test.*suite|test.*automation|endpoint.*testing)"; then
+        bad_pattern_indicators+=("Integration tests in DoD for non-Bruno task - Remove integration test requirement")
+        confidence_score=$((confidence_score - 20))
+    fi
+    
+    # Method/Feature count concerns (for borderline cases)
+    if [[ $feature_count -eq 3 || ($total_methods -eq 3 && $method_count -ge 3) ]]; then
+        concerns+=("Multiple methods detected (${total_methods}) - verify single interface focus")
+    fi
+    
+    # Conjunction words (cross-domain mixing indicator, but allow technical details)
+    if echo "$ticket_content" | grep -q -E "(and|plus|\+|also|additionally)" &&
+       ! echo "$ticket_content" | grep -iq -E "(authentication.*and.*authorization|http.*methods.*and.*authentication|fix.*and.*ensure|route.*and.*endpoint)"; then
         concerns+=("Conjunction words detected - verify single task focus")
     fi
 fi
@@ -532,8 +712,19 @@ fi
 echo -e "${CHECK} ${BLUE}Final Recommendation:${NC}"
 echo ""
 
+# Agent readiness check prompt
+echo -e "${WARNING} ${YELLOW}ASSIGNMENT READINESS CHECK:${NC}"
+echo -e "${INFO} Before assigning this ticket, consider:"
+echo -e "${INFO} • Is the intended agent available RIGHT NOW for new work?"
+echo -e "${INFO} • Have you checked their current active tickets and status?"
+echo -e "${INFO} • Are you following proper queue management (not multi-assigning)?"
+echo -e "${INFO} • Is this assignment urgent enough to interrupt current work?"
+echo -e "${INFO}"
+echo -e "${INFO} ${PURPLE}Remember: Only assign if agent is ready NOW - use queues for future work${NC}"
+echo ""
+
 # Domain-based decision logic (adaptive mode)
-if [[ "$EFFECTIVE_MODE" == "adaptive" && $business_domain_count -gt 1 ]]; then
+if [[ "$EFFECTIVE_MODE" == "adaptive" && $business_domain_count -gt 1 && "$is_valid_integration" != true ]]; then
     echo -e "${BREAKDOWN} ${RED}BREAKDOWN REQUIRED - MULTIPLE BUSINESS DOMAINS${NC}"
     echo -e "${INFO} Ticket spans multiple business capabilities: ${detected_business_domains[*]}"
     echo -e "${INFO} This violates the single-domain principle"
@@ -600,6 +791,14 @@ elif [ ${#bad_pattern_indicators[@]} -gt 0 ]; then
                 ;;
             *"Epic-level"*)
                 echo -e "${INFO} • Convert to epic with focused implementation subtasks"
+                ;;
+            *"Integration tests in DoD"*)
+                echo -e "${INFO} • Remove integration test requirement - only unit tests for feature development"
+                echo -e "${INFO} • Integration tests only required for Bruno API test writing tasks"
+                ;;  
+            *"Unit tests as separate phase"*)
+                echo -e "${INFO} • Replace with TDD approach - tests written during implementation"
+                echo -e "${INFO} • Remove separate testing phases - integrate testing into development"
                 ;;
         esac
     done

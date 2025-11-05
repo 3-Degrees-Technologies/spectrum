@@ -1,0 +1,1196 @@
+#!/bin/bash
+# system-dashboard - Comprehensive project state dashboard
+# Provides unified view of tickets, dependencies, agents, and project health
+
+# Colors and emoji
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+SUCCESS="✅"
+ERROR="❌"
+WARNING="⚠️"
+INFO="📋"
+WORKING="🔄"
+DASHBOARD="📊"
+HEALTH="💚"
+BLOCKED="🚫"
+TREE="🌳"
+
+# Files
+AGENT_REGISTRY="agent-registry.json"
+DEPS_FILE=".ticket_dependencies.json"
+
+# Usage check
+if [ $# -lt 1 ]; then
+    echo -e "${ERROR} Usage: ./system-dashboard <command> [arguments...]"
+    echo -e "${INFO} Commands:"
+    echo -e "${INFO}   overview                         # Complete project dashboard"
+    echo -e "${INFO}   health                           # Project health metrics"
+    echo -e "${INFO}   status                           # Ticket status distribution"
+    echo -e "${INFO}   flow                             # Development flow analysis"
+    echo -e "${INFO}   bottlenecks                      # Identify system bottlenecks"
+    echo -e "${INFO}   summary                          # Executive summary"
+    echo ""
+    echo -e "${INFO} Examples:"
+    echo -e "${INFO}   ./system-dashboard overview"
+    echo -e "${INFO}   ./system-dashboard health"
+    echo -e "${INFO}   ./system-dashboard bottlenecks"
+    exit 1
+fi
+
+command="$1"
+
+# Initialize files if they don't exist
+if [ ! -f "$AGENT_REGISTRY" ]; then
+    echo '{}' > "$AGENT_REGISTRY"
+fi
+
+if [ ! -f "$DEPS_FILE" ]; then
+    echo '{}' > "$DEPS_FILE"
+fi
+
+# Helper functions
+get_current_time() {
+    date '+%Y-%m-%d %H:%M:%S'
+}
+
+show_overview() {
+    echo -e "${DASHBOARD} ${BLUE}Centro Project Dashboard${NC}"
+    echo -e "${INFO} Generated: $(get_current_time)"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title']
+            assignee = data.get('assignee', {})
+            assignee_name = assignee.get('name', 'Unassigned') if assignee else 'Unassigned'
+            return status, title, assignee_name
+    except:
+        pass
+    return 'Unknown', 'Unknown Title', 'Unknown'
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')
+            tickets = []
+            for line in lines:
+                if line.strip() and ':' in line and '[' in line:
+                    # Parse format: CEN-787: Title [Status]
+                    try:
+                        id_part, rest = line.split(':', 1)
+                        ticket_id = id_part.strip()
+                        title_and_status = rest.strip()
+                        
+                        # Extract status from [Status] at the end
+                        status_start = title_and_status.rfind('[')
+                        status_end = title_and_status.rfind(']')
+                        
+                        if status_start > 0 and status_end > status_start:
+                            title = title_and_status[:status_start].strip()
+                            status = title_and_status[status_start+1:status_end].strip()
+                            
+                            tickets.append({
+                                'id': ticket_id,
+                                'title': title,
+                                'status': status,
+                                'assignee': 'Unassigned'  # We'll need to get this from registry
+                            })
+                    except:
+                        continue
+            return tickets
+    except:
+        pass
+    return []
+
+try:
+    # Load data
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    # Get all tickets
+    all_tickets = get_all_tickets()
+    
+    # Analyze ticket status distribution
+    status_counts = defaultdict(int)
+    assignee_counts = defaultdict(int)
+    
+    for ticket in all_tickets:
+        status_counts[ticket['status']] += 1
+        assignee_counts[ticket['assignee']] += 1
+    
+    total_tickets = len(all_tickets)
+    
+    print('${DASHBOARD} Project Overview:')
+    print(f'  📊 Total Tickets: {total_tickets}')
+    print(f'  👥 Active Agents: {len(agents)}')
+    print(f'  🔗 Tickets with Dependencies: {len(deps_data)}')
+    print()
+    
+    # Status breakdown
+    print('📈 Status Distribution:')
+    status_symbols = {
+        'Done': '✅',
+        'In Progress': '🔄',
+        'Todo': '📋',
+        'Canceled': '❌',
+        'Backlog': '📦'
+    }
+    
+    for status, count in sorted(status_counts.items(), key=lambda x: x[1], reverse=True):
+        symbol = status_symbols.get(status, '❓')
+        percentage = (count / total_tickets * 100) if total_tickets > 0 else 0
+        print(f'  {symbol} {status}: {count} ({percentage:.1f}%)')
+    print()
+    
+    # Agent workload summary
+    print('👤 Agent Workload:')
+    if not agents:
+        print('  ${INFO} No agents in registry')
+    else:
+        total_active = 0
+        total_queued = 0
+        
+        for agent_name, data in agents.items():
+            active_tickets = data.get('active_tickets', [])
+            queued_tickets = data.get('queued_tickets', [])
+            status = data.get('status', 'unknown')
+            
+            total_active += len(active_tickets)
+            total_queued += len(queued_tickets)
+            
+            status_symbol = '🔥' if status == 'busy' else '✅' if status == 'available' else '❓'
+            load_total = len(active_tickets) + len(queued_tickets)
+            
+            print(f'  {status_symbol} {agent_name}: {load_total} total ({len(active_tickets)} active + {len(queued_tickets)} queued)')
+        
+        print()
+        print(f'  📊 Team Summary: {total_active} active + {total_queued} queued = {total_active + total_queued} assigned')
+    
+    # Dependency health
+    print()
+    print('🔗 Dependency Health:')
+    if not deps_data:
+        print('  ✨ No dependencies tracked')
+    else:
+        blocked_count = 0
+        blocking_count = 0
+        
+        for ticket, deps in deps_data.items():
+            if deps.get('blocked_by'):
+                blocked_count += 1
+            if deps.get('blocks'):
+                blocking_count += 1
+        
+        print(f'  🚫 Blocked tickets: {blocked_count}')
+        print(f'  🔒 Blocking tickets: {blocking_count}')
+        print(f'  📊 Dependency ratio: {(len(deps_data) / total_tickets * 100):.1f}% of tickets have dependencies')
+    
+    # Quick health assessment
+    print()
+    print('💚 Health Indicators:')
+    
+    # Progress indicator
+    done_count = status_counts.get('Done', 0)
+    in_progress_count = status_counts.get('In Progress', 0)
+    todo_count = status_counts.get('Todo', 0)
+    
+    if total_tickets > 0:
+        completion_rate = done_count / total_tickets * 100
+        active_rate = in_progress_count / total_tickets * 100
+        
+        if completion_rate > 70:
+            progress_health = '✅ Excellent progress'
+        elif completion_rate > 50:
+            progress_health = '⚠️  Good progress'
+        elif completion_rate > 30:
+            progress_health = '⚠️  Moderate progress'
+        else:
+            progress_health = '🔥 Needs attention'
+        
+        print(f'  📈 Completion: {progress_health} ({completion_rate:.1f}% done)')
+        print(f'  🔄 Activity: {active_rate:.1f}% in progress')
+    
+    # Workload balance
+    if agents:
+        workloads = []
+        for agent_name, data in agents.items():
+            active = len(data.get('active_tickets', []))
+            queued = len(data.get('queued_tickets', []))
+            workloads.append(active + queued)
+        
+        if workloads:
+            max_load = max(workloads)
+            min_load = min(workloads)
+            load_variance = max_load - min_load
+            
+            if load_variance <= 1:
+                balance_health = '✅ Well balanced'
+            elif load_variance <= 3:
+                balance_health = '⚠️  Minor imbalance'
+            else:
+                balance_health = '🔥 Needs rebalancing'
+            
+            print(f'  ⚖️  Workload: {balance_health} (variance: {load_variance})')
+    
+    # Dependency health
+    if deps_data:
+        total_deps = sum(len(deps.get('blocked_by', [])) + len(deps.get('blocks', [])) for deps in deps_data.values())
+        avg_deps_per_ticket = total_deps / len(deps_data) if deps_data else 0
+        
+        if avg_deps_per_ticket < 2:
+            dep_health = '✅ Simple dependencies'
+        elif avg_deps_per_ticket < 4:
+            dep_health = '⚠️  Moderate complexity'
+        else:
+            dep_health = '🔥 High complexity'
+        
+        print(f'  🔗 Dependencies: {dep_health} ({avg_deps_per_ticket:.1f} deps/ticket)')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_health() {
+    echo -e "${HEALTH} ${GREEN}Project Health Metrics${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+import statistics
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')
+            tickets = []
+            for line in lines:
+                if line.strip() and ':' in line and '[' in line:
+                    # Parse format: CEN-787: Title [Status]
+                    try:
+                        id_part, rest = line.split(':', 1)
+                        ticket_id = id_part.strip()
+                        title_and_status = rest.strip()
+                        
+                        # Extract status from [Status] at the end
+                        status_start = title_and_status.rfind('[')
+                        status_end = title_and_status.rfind(']')
+                        
+                        if status_start > 0 and status_end > status_start:
+                            title = title_and_status[:status_start].strip()
+                            status = title_and_status[status_start+1:status_end].strip()
+                            
+                            tickets.append({
+                                'id': ticket_id,
+                                'title': title,
+                                'status': status,
+                                'assignee': 'Unassigned'  # We'll need to get this from registry
+                            })
+                    except:
+                        continue
+            return tickets
+    except:
+        pass
+    return []
+
+def health_score(value, thresholds):
+    '''Calculate health score based on thresholds [excellent, good, fair]'''
+    if value >= thresholds[0]:
+        return 'excellent', '✅', 100
+    elif value >= thresholds[1]:
+        return 'good', '⚠️', 75
+    elif value >= thresholds[2]:
+        return 'fair', '⚠️', 50
+    else:
+        return 'poor', '🔥', 25
+
+try:
+    # Load data
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    all_tickets = get_all_tickets()
+    total_tickets = len(all_tickets)
+    
+    # Calculate health metrics
+    health_metrics = {}
+    
+    # 1. Completion Rate
+    done_count = sum(1 for t in all_tickets if t['status'] == 'Done')
+    completion_rate = (done_count / total_tickets * 100) if total_tickets > 0 else 0
+    health_metrics['completion'] = health_score(completion_rate, [70, 50, 30])
+    
+    # 2. Activity Rate (In Progress)
+    in_progress_count = sum(1 for t in all_tickets if t['status'] == 'In Progress')
+    activity_rate = (in_progress_count / total_tickets * 100) if total_tickets > 0 else 0
+    health_metrics['activity'] = health_score(activity_rate, [20, 15, 10])
+    
+    # 3. Assignment Rate
+    assigned_count = sum(1 for t in all_tickets if t['assignee'] != 'Unassigned')
+    assignment_rate = (assigned_count / total_tickets * 100) if total_tickets > 0 else 0
+    health_metrics['assignment'] = health_score(assignment_rate, [80, 60, 40])
+    
+    # 4. Workload Balance
+    if agents:
+        workloads = []
+        for agent_name, data in agents.items():
+            active = len(data.get('active_tickets', []))
+            queued = len(data.get('queued_tickets', []))
+            workloads.append(active + queued)
+        
+        if len(workloads) > 1:
+            workload_variance = statistics.stdev(workloads)
+            balance_score = max(0, 100 - workload_variance * 20)  # Lower variance = better
+            health_metrics['balance'] = health_score(balance_score, [80, 60, 40])
+        else:
+            health_metrics['balance'] = ('excellent', '✅', 100)
+    else:
+        health_metrics['balance'] = ('poor', '🔥', 0)
+    
+    # 5. Dependency Complexity
+    if deps_data:
+        total_deps = sum(len(deps.get('blocked_by', [])) + len(deps.get('blocks', [])) for deps in deps_data.values())
+        avg_complexity = total_deps / len(deps_data)
+        complexity_score = max(0, 100 - avg_complexity * 15)  # Lower complexity = better
+        health_metrics['dependencies'] = health_score(complexity_score, [70, 50, 30])
+    else:
+        health_metrics['dependencies'] = ('excellent', '✅', 100)
+    
+    # 6. Blocked Tickets Rate
+    blocked_tickets = 0
+    for ticket, deps in deps_data.items():
+        blocked_by = deps.get('blocked_by', [])
+        if blocked_by:
+            # Check if any blockers are still active
+            for blocker in blocked_by:
+                blocker_ticket = next((t for t in all_tickets if t['id'] == blocker), None)
+                if blocker_ticket and blocker_ticket['status'] not in ['Done', 'Canceled']:
+                    blocked_tickets += 1
+                    break
+    
+    blocked_rate = (blocked_tickets / total_tickets * 100) if total_tickets > 0 else 0
+    blocked_score = max(0, 100 - blocked_rate * 5)  # Lower blocked rate = better
+    health_metrics['blocked'] = health_score(blocked_score, [90, 80, 70])
+    
+    # Calculate overall health score
+    total_score = sum(score for _, _, score in health_metrics.values())
+    overall_score = total_score / len(health_metrics)
+    overall_health = health_score(overall_score, [85, 70, 55])
+    
+    # Display results
+    print(f'${HEALTH} Overall Health: {overall_health[1]} {overall_health[0].upper()} ({overall_health[2]}/100)')
+    print()
+    
+    print('📊 Detailed Metrics:')
+    
+    metric_details = [
+        ('completion', f'Completion Rate: {completion_rate:.1f}%', f'{done_count}/{total_tickets} tickets done'),
+        ('activity', f'Activity Rate: {activity_rate:.1f}%', f'{in_progress_count} tickets in progress'),
+        ('assignment', f'Assignment Rate: {assignment_rate:.1f}%', f'{assigned_count}/{total_tickets} tickets assigned'),
+        ('balance', f'Workload Balance', f'Variance: {statistics.stdev(workloads):.1f}' if agents and len(workloads) > 1 else 'Single agent or no agents'),
+        ('dependencies', f'Dependency Complexity', f'Avg {avg_complexity:.1f} deps/ticket' if deps_data else 'No dependencies'),
+        ('blocked', f'Blocked Rate: {blocked_rate:.1f}%', f'{blocked_tickets} tickets currently blocked')
+    ]
+    
+    for metric_key, title, detail in metric_details:
+        health_status, symbol, score = health_metrics[metric_key]
+        print(f'  {symbol} {title} - {health_status.upper()} ({score}/100)')
+        print(f'      {detail}')
+        print()
+    
+    # Recommendations
+    print('💡 Recommendations:')
+    
+    poor_metrics = [k for k, (status, _, _) in health_metrics.items() if status == 'poor']
+    if poor_metrics:
+        if 'completion' in poor_metrics:
+            print('  🔥 Focus on completing more tickets - consider reducing scope or increasing velocity')
+        if 'activity' in poor_metrics:
+            print('  🔥 Increase development activity - more tickets should be in progress')
+        if 'assignment' in poor_metrics:
+            print('  🔥 Assign more tickets to agents - too many unassigned tickets')
+        if 'balance' in poor_metrics:
+            print('  🔥 Rebalance workload across agents - use workload-viz balance for details')
+        if 'dependencies' in poor_metrics:
+            print('  🔥 Simplify dependencies - consider breaking down complex tickets')
+        if 'blocked' in poor_metrics:
+            print('  🔥 Resolve blocking issues - use dependency-tree blocked for details')
+    else:
+        print('  ✅ Project health is good - continue current practices')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_status_breakdown() {
+    echo -e "${INFO} ${CYAN}Ticket Status Analysis${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')[1:]
+            tickets = []
+            for line in lines:
+                if line.strip() and '|' in line:
+                    parts = [p.strip() for p in line.split('|')]
+                    if len(parts) >= 4:
+                        tickets.append({
+                            'id': parts[0],
+                            'title': parts[1],
+                            'status': parts[2],
+                            'assignee': parts[3] if parts[3] != 'None' else 'Unassigned'
+                        })
+            return tickets
+    except:
+        pass
+    return []
+
+try:
+    all_tickets = get_all_tickets()
+    
+    # Status breakdown
+    status_counts = defaultdict(int)
+    assignee_breakdown = defaultdict(lambda: defaultdict(int))
+    
+    for ticket in all_tickets:
+        status_counts[ticket['status']] += 1
+        assignee_breakdown[ticket['assignee']][ticket['status']] += 1
+    
+    total_tickets = len(all_tickets)
+    
+    print(f'📊 Status Distribution ({total_tickets} total tickets):')
+    
+    status_symbols = {
+        'Done': '✅',
+        'In Progress': '🔄',
+        'Todo': '📋',
+        'Canceled': '❌',
+        'Backlog': '📦'
+    }
+    
+    # Sort by count descending
+    for status, count in sorted(status_counts.items(), key=lambda x: x[1], reverse=True):
+        symbol = status_symbols.get(status, '❓')
+        percentage = (count / total_tickets * 100) if total_tickets > 0 else 0
+        bar_length = int(percentage / 5)  # Scale bar to fit
+        bar = '█' * bar_length + '░' * (20 - bar_length)
+        
+        print(f'  {symbol} {status:<12} {count:>3} ({percentage:>5.1f}%) {bar}')
+    
+    print()
+    
+    # Assignment breakdown
+    print('👤 Assignment Breakdown:')
+    for assignee, statuses in sorted(assignee_breakdown.items()):
+        total_for_assignee = sum(statuses.values())
+        print(f'  👤 {assignee} ({total_for_assignee} tickets):')
+        
+        for status, count in sorted(statuses.items(), key=lambda x: x[1], reverse=True):
+            symbol = status_symbols.get(status, '❓')
+            percentage = (count / total_for_assignee * 100) if total_for_assignee > 0 else 0
+            print(f'    {symbol} {status}: {count} ({percentage:.1f}%)')
+        print()
+    
+    # Flow analysis
+    print('🔄 Development Flow:')
+    
+    # Calculate flow metrics
+    todo_count = status_counts.get('Todo', 0)
+    in_progress_count = status_counts.get('In Progress', 0) 
+    done_count = status_counts.get('Done', 0)
+    
+    # Flow ratios
+    if todo_count > 0:
+        todo_to_progress_ratio = in_progress_count / todo_count
+        print(f'  📋→🔄 Todo to In Progress ratio: {todo_to_progress_ratio:.2f}')
+        
+        if todo_to_progress_ratio > 0.5:
+            print('    ✅ Good flow from planning to development')
+        elif todo_to_progress_ratio > 0.2:
+            print('    ⚠️  Moderate flow - consider starting more work')
+        else:
+            print('    🔥 Poor flow - too much planning, not enough development')
+    
+    if in_progress_count > 0:
+        progress_to_done_ratio = done_count / in_progress_count if in_progress_count > 0 else 0
+        print(f'  🔄→✅ In Progress to Done ratio: {progress_to_done_ratio:.2f}')
+        
+        if progress_to_done_ratio > 3:
+            print('    ✅ Excellent completion rate')
+        elif progress_to_done_ratio > 1:
+            print('    ⚠️  Good completion rate')
+        else:
+            print('    🔥 Poor completion rate - work is starting but not finishing')
+    
+    # Bottleneck detection
+    print()
+    print('🚧 Potential Bottlenecks:')
+    
+    if in_progress_count > todo_count * 2:
+        print('  ⚠️  Too much work in progress - consider focusing on completion')
+        
+    if todo_count > done_count and done_count > 0:
+        print('  ⚠️  Large backlog building up - consider increasing velocity')
+        
+    unassigned_count = assignee_breakdown.get('Unassigned', {})
+    total_unassigned = sum(unassigned_count.values())
+    if total_unassigned > total_tickets * 0.3:
+        print(f'  🔥 Too many unassigned tickets: {total_unassigned} ({total_unassigned/total_tickets*100:.1f}%)')
+        
+    if not any([in_progress_count > todo_count * 2, todo_count > done_count and done_count > 0, total_unassigned > total_tickets * 0.3]):
+        print('  ✅ No obvious bottlenecks detected')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_flow_analysis() {
+    echo -e "${WORKING} ${PURPLE}Development Flow Analysis${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')[1:]
+            tickets = []
+            for line in lines:
+                if line.strip() and '|' in line:
+                    parts = [p.strip() for p in line.split('|')]
+                    if len(parts) >= 4:
+                        tickets.append({
+                            'id': parts[0],
+                            'title': parts[1],
+                            'status': parts[2],
+                            'assignee': parts[3] if parts[3] != 'None' else 'Unassigned'
+                        })
+            return tickets
+    except:
+        pass
+    return []
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    all_tickets = get_all_tickets()
+    
+    # Flow stage analysis
+    stages = {
+        'Backlog': sum(1 for t in all_tickets if t['status'] in ['Backlog']),
+        'Todo': sum(1 for t in all_tickets if t['status'] == 'Todo'),
+        'In Progress': sum(1 for t in all_tickets if t['status'] == 'In Progress'),
+        'Done': sum(1 for t in all_tickets if t['status'] == 'Done'),
+        'Canceled': sum(1 for t in all_tickets if t['status'] == 'Canceled')
+    }
+    
+    total_active = stages['Todo'] + stages['In Progress']
+    total_completed = stages['Done'] + stages['Canceled']
+    total_tickets = sum(stages.values())
+    
+    print('🔄 Development Flow Pipeline:')
+    print()
+    
+    # Visual flow representation
+    max_count = max(stages.values()) if stages.values() else 1
+    
+    flow_order = ['Backlog', 'Todo', 'In Progress', 'Done', 'Canceled']
+    flow_symbols = {
+        'Backlog': '📦',
+        'Todo': '📋', 
+        'In Progress': '🔄',
+        'Done': '✅',
+        'Canceled': '❌'
+    }
+    
+    for stage in flow_order:
+        count = stages[stage]
+        if count == 0:
+            continue
+            
+        percentage = (count / total_tickets * 100) if total_tickets > 0 else 0
+        bar_length = int((count / max_count) * 20) if max_count > 0 else 0
+        bar = '█' * bar_length + '░' * (20 - bar_length)
+        
+        print(f'{flow_symbols[stage]} {stage:<12} {count:>3} ({percentage:>5.1f}%) {bar}')
+    
+    print()
+    
+    # Flow health metrics
+    print('📊 Flow Health Metrics:')
+    
+    # WIP (Work in Progress) analysis
+    wip_count = stages['In Progress']
+    team_size = len(agents) if agents else 1
+    wip_per_agent = wip_count / team_size
+    
+    print(f'  🔄 Work in Progress: {wip_count} tickets ({wip_per_agent:.1f} per agent)')
+    
+    if wip_per_agent > 2:
+        print('    🔥 High WIP - consider focusing on completion before starting new work')
+    elif wip_per_agent > 1:
+        print('    ⚠️  Moderate WIP - manageable but watch for bottlenecks')
+    else:
+        print('    ✅ Healthy WIP levels')
+    
+    # Throughput estimation
+    if total_completed > 0 and total_active > 0:
+        completion_rate = total_completed / (total_completed + total_active)
+        print(f'  📈 Completion Rate: {completion_rate*100:.1f}% of active work completed')
+        
+        if completion_rate > 0.7:
+            print('    ✅ Excellent throughput')
+        elif completion_rate > 0.5:
+            print('    ⚠️  Good throughput')
+        else:
+            print('    🔥 Poor throughput - work is starting but not completing')
+    
+    # Queue depth analysis
+    todo_count = stages['Todo']
+    backlog_count = stages['Backlog']  
+    queue_depth = todo_count + backlog_count
+    
+    print(f'  📋 Queue Depth: {queue_depth} tickets ready to start')
+    
+    if queue_depth > wip_count * 3:
+        print('    ⚠️  Large queue - plenty of work available')
+    elif queue_depth > wip_count:
+        print('    ✅ Healthy queue size')
+    else:
+        print('    🔥 Shallow queue - may run out of ready work')
+    
+    # Agent utilization
+    if agents:
+        print()
+        print('👤 Agent Flow Utilization:')
+        
+        for agent_name, data in agents.items():
+            active_tickets = data.get('active_tickets', [])
+            queued_tickets = data.get('queued_tickets', [])
+            
+            utilization = len(active_tickets) / 2 * 100  # Assuming 2 tickets optimal
+            utilization = min(100, utilization)
+            
+            util_symbol = '🔥' if utilization > 100 else '✅' if utilization > 50 else '⚠️'
+            
+            print(f'  {util_symbol} {agent_name}: {utilization:.0f}% utilized')
+            print(f'    🔄 Active: {len(active_tickets)}, 📝 Queued: {len(queued_tickets)}')
+    
+    # Flow recommendations
+    print()
+    print('💡 Flow Optimization Recommendations:')
+    
+    recommendations = []
+    
+    if wip_per_agent > 2:
+        recommendations.append('🔄 Reduce WIP - focus on completing current work before starting new')
+    
+    if queue_depth < wip_count:
+        recommendations.append('📋 Increase ready work - create more Todo tickets')
+    
+    if stages['Todo'] > stages['In Progress'] * 3:
+        recommendations.append('🚀 Start more work - move Todo tickets to In Progress')
+    
+    if total_completed > 0 and (total_completed / (total_completed + total_active)) < 0.5:
+        recommendations.append('✅ Focus on completion - finish In Progress work')
+    
+    unassigned_count = sum(1 for t in all_tickets if t['assignee'] == 'Unassigned')
+    if unassigned_count > total_tickets * 0.2:
+        recommendations.append('👤 Assign more tickets - too many unassigned')
+    
+    if not recommendations:
+        recommendations.append('✅ Flow looks healthy - continue current practices')
+    
+    for rec in recommendations:
+        print(f'  {rec}')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_bottlenecks() {
+    echo -e "${BLOCKED} ${RED}System Bottlenecks Analysis${NC}"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')[1:]
+            tickets = []
+            for line in lines:
+                if line.strip() and '|' in line:
+                    parts = [p.strip() for p in line.split('|')]
+                    if len(parts) >= 4:
+                        tickets.append({
+                            'id': parts[0],
+                            'title': parts[1],
+                            'status': parts[2],
+                            'assignee': parts[3] if parts[3] != 'None' else 'Unassigned'
+                        })
+            return tickets
+    except:
+        pass
+    return []
+
+def get_ticket_info(ticket_id):
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket_id], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            status = data['state']['name']
+            title = data['title'][:40] + ('...' if len(data['title']) > 40 else '')
+            return status, title
+    except:
+        pass
+    return 'Unknown', 'Unknown Title'
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    all_tickets = get_all_tickets()
+    bottlenecks = []
+    
+    print('🔍 Identifying System Bottlenecks...')
+    print()
+    
+    # 1. Dependency Bottlenecks
+    print('🔗 Dependency Bottlenecks:')
+    
+    blocking_counts = defaultdict(int)
+    for ticket, deps in deps_data.items():
+        blocks = deps.get('blocks', [])
+        for blocked_ticket in blocks:
+            blocking_counts[ticket] += 1
+    
+    if blocking_counts:
+        # Sort by number of tickets blocked
+        top_blockers = sorted(blocking_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        for ticket, block_count in top_blockers:
+            status, title = get_ticket_info(ticket)
+            
+            if status not in ['Done', 'Canceled']:
+                criticality = '🔥' if block_count >= 3 else '⚠️' if block_count >= 2 else '📋'
+                bottlenecks.append(('dependency', ticket, f'blocks {block_count} tickets', status))
+                
+                print(f'  {criticality} {ticket} - {title}')
+                print(f'      Blocks {block_count} tickets | Status: {status}')
+                
+                if status == 'Todo':
+                    print(f'      🚨 HIGH PRIORITY: Unstarted blocker!')
+    else:
+        print('  ✅ No dependency bottlenecks found')
+    
+    print()
+    
+    # 2. Agent Workload Bottlenecks
+    print('👤 Agent Workload Bottlenecks:')
+    
+    if agents:
+        agent_loads = []
+        for agent_name, data in agents.items():
+            active_tickets = data.get('active_tickets', [])
+            queued_tickets = data.get('queued_tickets', [])
+            total_load = len(active_tickets) + len(queued_tickets)
+            
+            agent_loads.append((agent_name, total_load, len(active_tickets), len(queued_tickets)))
+        
+        # Sort by total load
+        agent_loads.sort(key=lambda x: x[1], reverse=True)
+        
+        avg_load = sum(load[1] for load in agent_loads) / len(agent_loads)
+        
+        for agent_name, total_load, active, queued in agent_loads:
+            if total_load > avg_load + 2:  # Significantly above average
+                bottlenecks.append(('workload', agent_name, f'{total_load} total tickets', 'overloaded'))
+                print(f'  🔥 {agent_name}: Overloaded with {total_load} tickets')
+                print(f'      {active} active + {queued} queued (avg: {avg_load:.1f})')
+            elif total_load == 0:
+                print(f'  ⚠️  {agent_name}: No assigned work (potential capacity)')
+        
+        if not any(load[1] > avg_load + 2 for load in agent_loads):
+            print('  ✅ No agent overload bottlenecks')
+    else:
+        print('  ❌ No agents in registry')
+    
+    print()
+    
+    # 3. Status Flow Bottlenecks
+    print('🔄 Flow Bottlenecks:')
+    
+    status_counts = defaultdict(int)
+    for ticket in all_tickets:
+        status_counts[ticket['status']] += 1
+    
+    in_progress = status_counts.get('In Progress', 0)
+    todo = status_counts.get('Todo', 0)
+    done = status_counts.get('Done', 0)
+    
+    flow_issues = []
+    
+    # Too much WIP
+    team_size = len(agents) if agents else 1
+    if in_progress > team_size * 3:
+        flow_issues.append(f'🔥 Excessive WIP: {in_progress} tickets in progress for {team_size} agents')
+        bottlenecks.append(('flow', 'WIP', f'{in_progress} in progress', 'excessive'))
+    
+    # Stalled progress
+    if in_progress > 0 and done > 0:
+        completion_rate = done / (done + in_progress)
+        if completion_rate < 0.3:
+            flow_issues.append(f'🔥 Poor completion rate: {completion_rate*100:.1f}% - work starting but not finishing')
+            bottlenecks.append(('flow', 'completion', f'{completion_rate*100:.1f}% rate', 'poor'))
+    
+    # Assignment bottleneck
+    unassigned = sum(1 for t in all_tickets if t['assignee'] == 'Unassigned')
+    if unassigned > len(all_tickets) * 0.3:
+        flow_issues.append(f'🔥 Assignment bottleneck: {unassigned} unassigned tickets ({unassigned/len(all_tickets)*100:.1f}%)')
+        bottlenecks.append(('flow', 'assignment', f'{unassigned} unassigned', 'high'))
+    
+    if flow_issues:
+        for issue in flow_issues:
+            print(f'  {issue}')
+    else:
+        print('  ✅ No flow bottlenecks detected')
+    
+    print()
+    
+    # 4. Currently Blocked Tickets
+    print('🚫 Currently Blocked Tickets:')
+    
+    blocked_tickets = []
+    for ticket, deps in deps_data.items():
+        blocked_by = deps.get('blocked_by', [])
+        if blocked_by:
+            # Check if any blockers are still active
+            active_blockers = []
+            for blocker in blocked_by:
+                blocker_status, _ = get_ticket_info(blocker)
+                if blocker_status not in ['Done', 'Canceled']:
+                    active_blockers.append((blocker, blocker_status))
+            
+            if active_blockers:
+                ticket_status, title = get_ticket_info(ticket)
+                blocked_tickets.append((ticket, title, ticket_status, active_blockers))
+    
+    if blocked_tickets:
+        for ticket, title, status, blockers in blocked_tickets[:5]:  # Show top 5
+            print(f'  🚫 {ticket} - {title} ({status})')
+            print(f'      Blocked by: {', '.join([f'{b[0]} ({b[1]})' for b in blockers])}')
+        
+        if len(blocked_tickets) > 5:
+            print(f'  ... and {len(blocked_tickets) - 5} more blocked tickets')
+    else:
+        print('  ✅ No currently blocked tickets')
+    
+    # Summary and Recommendations
+    print()
+    print('🎯 Bottleneck Resolution Priority:')
+    
+    if not bottlenecks:
+        print('  ✅ No significant bottlenecks detected - system is flowing well')
+    else:
+        # Prioritize bottlenecks
+        priority_order = []
+        
+        # High priority: Todo tickets blocking others
+        dep_bottlenecks = [(b[1], b[2]) for b in bottlenecks if b[0] == 'dependency']
+        if dep_bottlenecks:
+            priority_order.append(('🔥 HIGH', f'Start blocked dependency work: {', '.join([b[0] for b in dep_bottlenecks[:3]])}'))
+        
+        # Medium priority: Overloaded agents
+        workload_bottlenecks = [b[1] for b in bottlenecks if b[0] == 'workload']
+        if workload_bottlenecks:
+            priority_order.append(('⚠️  MEDIUM', f'Rebalance work from: {', '.join(workload_bottlenecks)}'))
+        
+        # Lower priority: Flow issues
+        flow_bottlenecks = [b[1] for b in bottlenecks if b[0] == 'flow']
+        if flow_bottlenecks:
+            priority_order.append(('📋 LOWER', f'Address flow issues: {', '.join(flow_bottlenecks)}'))
+        
+        for priority, action in priority_order:
+            print(f'  {priority}: {action}')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+show_summary() {
+    echo -e "${DASHBOARD} ${BLUE}Executive Summary${NC}"
+    echo -e "${INFO} Generated: $(get_current_time)"
+    echo ""
+    
+    python3 -c "
+import json
+import subprocess
+from collections import defaultdict
+
+def get_all_tickets():
+    try:
+        result = subprocess.run(['python3', './.tools/saber.py', 'list'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\\n')[1:]
+            tickets = []
+            for line in lines:
+                if line.strip() and '|' in line:
+                    parts = [p.strip() for p in line.split('|')]
+                    if len(parts) >= 4:
+                        tickets.append({
+                            'id': parts[0],
+                            'title': parts[1],
+                            'status': parts[2],
+                            'assignee': parts[3] if parts[3] != 'None' else 'Unassigned'
+                        })
+            return tickets
+    except:
+        pass
+    return []
+
+try:
+    with open('$AGENT_REGISTRY', 'r') as f:
+        agents = json.load(f)
+    
+    with open('$DEPS_FILE', 'r') as f:
+        deps_data = json.load(f)
+    
+    all_tickets = get_all_tickets()
+    total_tickets = len(all_tickets)
+    
+    # Key metrics
+    done_count = sum(1 for t in all_tickets if t['status'] == 'Done')
+    in_progress_count = sum(1 for t in all_tickets if t['status'] == 'In Progress')
+    todo_count = sum(1 for t in all_tickets if t['status'] == 'Todo')
+    
+    completion_rate = (done_count / total_tickets * 100) if total_tickets > 0 else 0
+    
+    # Team metrics
+    team_size = len(agents)
+    total_active_work = sum(len(data.get('active_tickets', [])) for data in agents.values())
+    total_queued_work = sum(len(data.get('queued_tickets', [])) for data in agents.values())
+    
+    # Dependency metrics
+    blocked_tickets = 0
+    for ticket, deps in deps_data.items():
+        if deps.get('blocked_by'):
+            blocked_tickets += 1
+    
+    print('📊 Key Metrics:')
+    print(f'  🎯 Total Tickets: {total_tickets}')
+    print(f'  ✅ Completed: {done_count} ({completion_rate:.1f}%)')
+    print(f'  🔄 In Progress: {in_progress_count}')
+    print(f'  📋 Todo: {todo_count}')
+    print(f'  👥 Team Size: {team_size} agents')
+    print(f'  🔗 Dependencies: {len(deps_data)} tickets with deps')
+    print()
+    
+    print('⚡ Current Activity:')
+    print(f'  🔄 Active Work: {total_active_work} tickets')
+    print(f'  📝 Queued Work: {total_queued_work} tickets')
+    print(f'  🚫 Blocked: {blocked_tickets} tickets')
+    print()
+    
+    # Status assessment
+    print('📈 Status Assessment:')
+    
+    if completion_rate > 70:
+        status = '✅ EXCELLENT'
+        status_detail = 'Project is making excellent progress'
+    elif completion_rate > 50:
+        status = '⚠️  GOOD'
+        status_detail = 'Project is progressing well'
+    elif completion_rate > 30:
+        status = '⚠️  MODERATE'
+        status_detail = 'Project progress is moderate, room for improvement'
+    else:
+        status = '🔥 NEEDS ATTENTION'
+        status_detail = 'Project needs immediate attention to improve progress'
+    
+    print(f'  {status}: {status_detail}')
+    
+    # Activity level
+    team_activity = (total_active_work / team_size) if team_size > 0 else 0
+    if team_activity > 1.5:
+        activity_status = '✅ High activity'
+    elif team_activity > 0.8:
+        activity_status = '⚠️  Moderate activity'
+    else:
+        activity_status = '🔥 Low activity'
+    
+    print(f'  📊 Team Activity: {activity_status} ({team_activity:.1f} tickets/agent)')
+    
+    # Blocked work impact
+    if blocked_tickets == 0:
+        block_status = '✅ No blocking issues'
+    elif blocked_tickets < total_tickets * 0.1:
+        block_status = '⚠️  Minor blocking issues'
+    else:
+        block_status = '🔥 Significant blocking issues'
+    
+    print(f'  🚫 Dependencies: {block_status}')
+    print()
+    
+    # Top priorities
+    print('🎯 Top Priorities:')
+    
+    priorities = []
+    
+    # Check for urgent blockers
+    urgent_blockers = []
+    for ticket, deps in deps_data.items():
+        blocks = deps.get('blocks', [])
+        if len(blocks) >= 2:  # Blocks multiple tickets
+            try:
+                result = subprocess.run(['python3', './.tools/saber.py', 'get', ticket], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                    if data['state']['name'] == 'Todo':
+                        urgent_blockers.append((ticket, len(blocks)))
+            except:
+                pass
+    
+    if urgent_blockers:
+        top_blocker = max(urgent_blockers, key=lambda x: x[1])
+        priorities.append(f'🔥 Start {top_blocker[0]} (blocks {top_blocker[1]} tickets)')
+    
+    # Check for completion opportunities
+    if in_progress_count > todo_count:
+        priorities.append('✅ Focus on completing in-progress work')
+    
+    # Check for assignment needs
+    unassigned = sum(1 for t in all_tickets if t['assignee'] == 'Unassigned')
+    if unassigned > total_tickets * 0.2:
+        priorities.append(f'👤 Assign {unassigned} unassigned tickets')
+    
+    # Check for workload imbalance
+    if team_size > 1:
+        workloads = [len(data.get('active_tickets', [])) + len(data.get('queued_tickets', [])) for data in agents.values()]
+        if max(workloads) - min(workloads) > 3:
+            priorities.append('⚖️  Rebalance workload across team')
+    
+    if not priorities:
+        priorities.append('✅ Continue current development practices')
+    
+    for i, priority in enumerate(priorities[:3], 1):  # Top 3 priorities
+        print(f'  {i}. {priority}')
+    
+    print()
+    print('💡 Next Actions:')
+    print('  • Use dependency-tree critical for detailed bottleneck analysis')
+    print('  • Use workload-viz capacity for team capacity planning')
+    print('  • Use system-dashboard health for detailed health metrics')
+        
+except Exception as e:
+    print(f'Error: {e}')
+"
+}
+
+# Main command handling
+case "$command" in
+    "overview")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard overview"
+            exit 1
+        fi
+        show_overview
+        ;;
+    "health")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard health"
+            exit 1
+        fi
+        show_health
+        ;;
+    "status")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard status"
+            exit 1
+        fi
+        show_status_breakdown
+        ;;
+    "flow")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard flow"
+            exit 1
+        fi
+        show_flow_analysis
+        ;;
+    "bottlenecks")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard bottlenecks"
+            exit 1
+        fi
+        show_bottlenecks
+        ;;
+    "summary")
+        if [ $# -ne 1 ]; then
+            echo -e "${ERROR} Usage: ./system-dashboard summary"
+            exit 1
+        fi
+        show_summary
+        ;;
+    *)
+        echo -e "${ERROR} Unknown command: $command"
+        echo -e "${INFO} Use ./system-dashboard without arguments for help"
+        exit 1
+        ;;
+esac

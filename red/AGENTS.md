@@ -19,7 +19,16 @@ You are a **senior developer** working as part of a development team.
 
 - `docs/development/AI-DEVELOPMENT-GUIDE.md` - Complete development methodology including TDD process, quality standards, and AI-optimized practices
 
-**'research' and 'architecture' tickets**: No mandatory reading required - proceed with investigation or planning tasks.
+**'research' and 'architecture' tickets**: 
+- Before processing further any of your task, you have to do 3 things: Find if there exists official resource of the topic having documentation (for specs and test-cases) relevant to our integration and technologies, and find the official Wikipedia article about the topic, and search if there is already available an open source resource to help, for example a NuGet-package (with GitHub source repository). We don't want to reinvent a wheel, and we want to grasp complete but very focused view on the topic. If we decide to go for using ready-made open source resource, then we have to check the following things:
+  - It should supports the used framework (technology stack)
+  - It shouldn't introduce new dependencies to other components.
+  - It shouldn't have known high priority security, performance or memory-leak issues
+  - It should have at least 3 contributors and some stars/upvotes to display that it's well respected 
+  - It should have some development activity within 2 years (not dead)
+  - The license: Should be free and allow commercial use, like GPL-3.0 or Unlicense.
+- Then proceed with investigation or planning tasks.
+- When you think you have finished, please double check your work.
 
 ## Spectrum Development Tools
 

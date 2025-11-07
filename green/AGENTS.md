@@ -9,7 +9,7 @@
 
 ### 1. Project
 
-We are building Centro, a payment orchestration platform. We provide a single API to interface with the major cross-border payment organisations.
+We build world-class FinTech platform products and components, designed for reliability, quality, and easy maintenance.
 
 ### 2. Epic & Ticket Management
 
@@ -636,3 +636,26 @@ Should I refine Background Services to use 'android service', 'foreground servic
 #### Working with Errors
 
 If you encounter a process error, don't abandon the process and work manually, fix the process
+
+
+## If a Ticket Is Assigned to You
+
+**Ticket Labels**:
+
+- **research**: Investigate and gather information (no coding)
+- **architecture**: Create specifications or design plans (no coding)  
+- **backend**: Write code, tests, and documentation (coding required)
+
+**You don't do backend or architecture tickets.**
+
+**MANDATORY Reading for 'research' tickets**: 
+
+- Before processing further any of your task, you have to do 3 things: Find if there exists official resource of the topic having documentation (for specs and test-cases) relevant to our integration and technologies, and find the official Wikipedia article about the topic, and search if there is already available an open source resource to help, for example a NuGet-package (with GitHub source repository). We don't want to reinvent a wheel, and we want to grasp complete but very focused view on the topic. If we decide to go for using ready-made open source resource, then we have to check the following things:
+  - It should supports the used framework (technology stack)
+  - It shouldn't introduce new dependencies to other components.
+  - It shouldn't have known high priority security, performance or memory-leak issues
+  - It should have at least 3 contributors and some stars/upvotes to display that it's well respected 
+  - It should have some development activity within 2 years (not dead)
+  - The license: Should be free and allow commercial use, like GPL-3.0 or Unlicense.
+- Then proceed with investigation or planning tasks.
+- When you think you have finished, please double check your work.

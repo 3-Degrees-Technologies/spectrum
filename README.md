@@ -49,7 +49,8 @@ A typical workflow:
 - Ask Green to queue the ticket for the developer agent
 - Ask Green to assign a ticket to the developer agent
 - Ask the developer agent to discover tickets
+- Confirm developer to start the ticket
 - When the developer agent is ready, ask for PR readiness
 - Check GitHub for PRs; if the PR is acceptable, merge it
 - Ask the developer agent for PR cleanup
-- Ask Green to close the ticket. Green keeps its queue in `agent-registry.json`
+- Ask Green to complete the ticket. Green keeps its queue in `agent-registry.json`

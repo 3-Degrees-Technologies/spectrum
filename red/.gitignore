@@ -1,0 +1,7 @@
+# Spectrum AI Team - Security
+.spectrum/tokens.env
+.spectrum/team-configured
+.env
+*.key
+*.pem
+.opencode/auth.json

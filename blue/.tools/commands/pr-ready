@@ -225,22 +225,9 @@ if [[ $gh_auth_exit_code -ne 0 ]]; then
     exit 1
 fi
 
-# Check if authenticated user is Sam-3Degrees (extract from multiline output)
+# Display authenticated GitHub user (informational)
 gh_user=$(echo "$gh_auth_status" | awk '/Logged in to github.com account/ {account=$0; sub(/.*account /, "", account); sub(/ \(.*/, "", account)} /Active account: true/ {if(account) {print account; exit}}' || echo "unknown")
-if [[ "$gh_user" != "Sam-3Degrees" ]]; then
-    echo -e "${ERROR} ${RED}BLOCKING: GitHub CLI authenticated as wrong user${NC}"
-    echo ""
-    echo -e "${YELLOW}Current user: $gh_user${NC}"
-    echo -e "${YELLOW}Required user: Sam-3Degrees${NC}"
-    echo ""
-    echo -e "${INFO} ${YELLOW}To fix authentication:${NC}"
-    echo "  1. Logout current user: ${BLUE}gh auth logout${NC}"
-    echo "  2. Login as Sam-3Degrees: ${BLUE}gh auth login${NC}"
-    echo "  3. Follow prompts to authenticate as Sam-3Degrees"
-    echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
-    exit 1
-fi
-echo -e "${SUCCESS} GitHub CLI authenticated as Sam-3Degrees"
+echo -e "${SUCCESS} GitHub CLI authenticated as: ${BLUE}$gh_user${NC}"
 
 # Check SSH key configuration
 echo -e "${WORKING} Checking SSH key configuration..."
@@ -251,7 +238,7 @@ if [[ ! -f ~/.ssh/config ]]; then
     echo ""
     echo -e "${INFO} ${YELLOW}SSH configuration required:${NC}"
     echo "  1. Create ~/.ssh/config with github.com configuration"
-    echo "  2. Ensure Sam-3Degrees SSH key is specified"
+    echo "  2. Ensure SSH key is specified"
     echo "  3. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
     exit 1
 fi
@@ -268,7 +255,7 @@ if [[ -z "$github_ssh_key" ]]; then
     echo "Host github.com"
     echo "   HostName github.com"
     echo "   User git"
-    echo "   IdentityFile ~/.ssh/id_ed25519_sam_3degrees"
+    echo "   IdentityFile ~/.ssh/id_ed25519_(name)"
     echo ""
     echo -e "${INFO} Add this configuration to ~/.ssh/config and rerun pr-ready"
     exit 1
@@ -284,16 +271,10 @@ if [[ ! -f "$expanded_ssh_key" ]]; then
     echo -e "${YELLOW}SSH key file does not exist: $github_ssh_key${NC}"
     echo ""
     echo -e "${INFO} ${YELLOW}To fix SSH key:${NC}"
-    echo "  1. Ensure Sam-3Degrees SSH key exists at: $github_ssh_key"
+    echo "  1. Ensure SSH key exists at: $github_ssh_key"
     echo "  2. Or update ~/.ssh/config to point to correct key file"
     echo "  3. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
     exit 1
-fi
-
-# Check if SSH key is for Sam-3Degrees (check filename pattern)
-if [[ "$github_ssh_key" != *"sam_3degrees"* ]]; then
-    echo -e "${YELLOW} Warning: SSH key filename doesn't contain 'sam_3degrees': $github_ssh_key"
-    echo -e "${INFO} Ensure this is the correct SSH key for Sam-3Degrees account"
 fi
 
 echo -e "${SUCCESS} SSH key configured: $github_ssh_key"
@@ -307,21 +288,7 @@ ssh_exit_code=$?
 if [[ $ssh_exit_code -eq 1 ]] && [[ "$ssh_test" == *"successfully authenticated"* ]]; then
     # Extract username from SSH test response
     ssh_user=$(echo "$ssh_test" | grep "successfully authenticated" | sed 's/.*Hi \([^!]*\)!.*/\1/')
-    if [[ "$ssh_user" == "Sam-3Degrees" ]]; then
-        echo -e "${SUCCESS} SSH authentication verified as Sam-3Degrees"
-    else
-        echo -e "${ERROR} ${RED}BLOCKING: SSH authenticated as wrong user${NC}"
-        echo ""
-        echo -e "${YELLOW}SSH authenticated as: $ssh_user${NC}"
-        echo -e "${YELLOW}Required user: Sam-3Degrees${NC}"
-        echo ""
-        echo -e "${INFO} ${YELLOW}To fix SSH authentication:${NC}"
-        echo "  1. Ensure ~/.ssh/config points to Sam-3Degrees SSH key"
-        echo "  2. Verify SSH key is added to Sam-3Degrees GitHub account"
-        echo "  3. Test connection: ${BLUE}ssh -T git@github.com${NC}"
-        echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"
-        exit 1
-    fi
+    echo -e "${SUCCESS} SSH authentication verified as: ${BLUE}$ssh_user${NC}"
 else
     echo -e "${ERROR} ${RED}BLOCKING: SSH connection to GitHub failed${NC}"
     echo ""
@@ -329,7 +296,7 @@ else
     echo "$ssh_test"
     echo ""
     echo -e "${INFO} ${YELLOW}To fix SSH connection:${NC}"
-    echo "  1. Ensure SSH key is added to Sam-3Degrees GitHub account"
+    echo "  1. Ensure SSH key is added to GitHub account"
     echo "  2. Check SSH key permissions: ${BLUE}chmod 600 $github_ssh_key${NC}"
     echo "  3. Test connection: ${BLUE}ssh -T git@github.com${NC}"
     echo "  4. Rerun pr-ready: ${BLUE}./.tools/commands/pr-ready${NC}"

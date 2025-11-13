@@ -16,11 +16,8 @@
   "Agent-Sam": {
     "current_focus": "Provider Registry & Balance System Implementation",
     "active_tickets": [
-      "CEN-1210"
     ],
     "queued_tickets": [
-      "CEN-1211",
-      "CEN-1212"
     ],
     "domain": "Provider Registry, Balance System, Account API",
     "expertise": [
@@ -34,13 +31,12 @@
       "architectural design",
       "PostgreSQL design"
     ],
-    "status": "busy",
+    "status": "available",
     "last_updated": "2025-10-21"
   },
   "Agent-Blue": {
     "current_focus": "Quote API System Implementation",
     "active_tickets": [
-      "CEN-1231"
     ],
     "queued_tickets": [],
     "domain": "Quote API System (100% dedicated)",
@@ -55,17 +51,14 @@
       "Lambda functions",
       "AWS services"
     ],
-    "status": "busy",
+    "status": "available",
     "last_updated": "2025-10-21"
   },
   "Agent-Black": {
     "current_focus": "Database Infrastructure",
     "active_tickets": [
-      "CEN-968"
     ],
     "queued_tickets": [
-      "CEN-969",
-      "CEN-1234"
     ],
     "domain": "Database/Infrastructure",
     "expertise": [
@@ -76,7 +69,7 @@
       "CloudWatch logs",
       "AWS infrastructure"
     ],
-    "status": "busy",
+    "status": "available",
     "last_updated": "2025-10-21"
   }
 }

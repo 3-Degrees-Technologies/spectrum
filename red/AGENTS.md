@@ -19,7 +19,16 @@ You are a **senior developer** working as part of a development team.
 
 - `docs/development/AI-DEVELOPMENT-GUIDE.md` - Complete development methodology including TDD process, quality standards, and AI-optimized practices
 
-**'research' and 'architecture' tickets**: No mandatory reading required - proceed with investigation or planning tasks.
+**'research' and 'architecture' tickets**: 
+- Before processing further any of your task, you have to do 3 things: Find if there exists official resource of the topic having documentation (for specs and test-cases) relevant to our integration and technologies, and find the official Wikipedia article about the topic, and search if there is already available an open source resource to help, for example a NuGet-package (with GitHub source repository). We don't want to reinvent a wheel, and we want to grasp complete but very focused view on the topic. If we decide to go for using ready-made open source resource, then we have to check the following things:
+  - It should supports the used framework (technology stack)
+  - It shouldn't introduce new dependencies to other components.
+  - It shouldn't have known high priority security, performance or memory-leak issues
+  - It should have at least 3 contributors and some stars/upvotes to display that it's well respected 
+  - It should have some development activity within 2 years (not dead)
+  - The license: Should be free and allow commercial use, like GPL-3.0 or Unlicense.
+- Then proceed with investigation or planning tasks.
+- When you think you have finished, please double check your work.
 
 ## Spectrum Development Tools
 
@@ -154,6 +163,40 @@ The executable framework provides **direct prompting** - no need to memorize com
 # Send a message to the team
 .tools/slack_rest_client.py send_message "Implementation complete, ready for review"
 ```
+
+### Spectrum Utility Tools
+
+**Git Repository Helper:**
+
+```bash
+.tools/git_repo_helper.py --diagnostics    # Show git repo information
+.tools/git_repo_helper.py --git-root       # Get git root path
+.tools/git_repo_helper.py --working-path   # Get working directory
+```
+
+**Purpose**: Find git root when working from agent subfolders. Useful for git operations when your current directory is `red/.tools/` or deeper.
+
+**GitHub Issues Management** (if needed):
+
+```bash
+.tools/github-issues.py create "Title" --body "Description" --labels "bug"
+.tools/github-issues.py list --state open
+.tools/github-issues.py get #123
+```
+
+**Requirements**: GitHub CLI (`gh`) must be installed and authenticated.
+
+**Purpose**: Manage GitHub Issues directly from CLI. Useful for bug reports or feature requests in GitHub-based projects.
+
+**Local Task Tracking** (if needed):
+
+```bash
+.tools/saber-csv.py create "Local task" --description "Details"
+.tools/saber-csv.py list --state open
+.tools/saber-csv.py status TKT-1 "In Progress"
+```
+
+**Purpose**: Offline task tracking using CSV files. Useful for personal task lists or when Linear is unavailable.
 
 ### Direct Mentions
 

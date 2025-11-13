@@ -164,6 +164,40 @@ The executable framework provides **direct prompting** - no need to memorize com
 .tools/slack_rest_client.py send_message "Implementation complete, ready for review"
 ```
 
+### Spectrum Utility Tools
+
+**Git Repository Helper:**
+
+```bash
+.tools/git_repo_helper.py --diagnostics    # Show git repo information
+.tools/git_repo_helper.py --git-root       # Get git root path
+.tools/git_repo_helper.py --working-path   # Get working directory
+```
+
+**Purpose**: Find git root when working from agent subfolders. Useful for git operations when your current directory is `red/.tools/` or deeper.
+
+**GitHub Issues Management** (if needed):
+
+```bash
+.tools/github-issues.py create "Title" --body "Description" --labels "bug"
+.tools/github-issues.py list --state open
+.tools/github-issues.py get #123
+```
+
+**Requirements**: GitHub CLI (`gh`) must be installed and authenticated.
+
+**Purpose**: Manage GitHub Issues directly from CLI. Useful for bug reports or feature requests in GitHub-based projects.
+
+**Local Task Tracking** (if needed):
+
+```bash
+.tools/saber-csv.py create "Local task" --description "Details"
+.tools/saber-csv.py list --state open
+.tools/saber-csv.py status TKT-1 "In Progress"
+```
+
+**Purpose**: Offline task tracking using CSV files. Useful for personal task lists or when Linear is unavailable.
+
 ### Direct Mentions
 
 Use `@Agent-Name` in Slack to get their attention:

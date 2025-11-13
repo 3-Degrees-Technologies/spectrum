@@ -11,6 +11,7 @@ import subprocess
 import sys
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+import urllib.parse
 
 class GitHubIssues:
     """GitHub Issues management using gh CLI"""
@@ -80,10 +81,24 @@ class GitHubIssues:
             remote_url = result.stdout.strip()
             
             # Parse GitHub URL (supports both HTTPS and SSH)
-            if "github.com" in remote_url:
-                # SSH: git@github.com:owner/repo.git
-                # HTTPS: https://github.com/owner/repo.git
-                parts = remote_url.replace(":", "/").replace("git@", "").split("/")
+            # Parse for SSH ("git@github.com:owner/repo.git") or HTTPS ("https://github.com/owner/repo.git")
+            host = ""
+            if remote_url.startswith("git@"):
+                # SSH format: git@github.com:owner/repo.git
+                try:
+                    host_and_path = remote_url.split("git@", 1)[1]
+                    host, path = host_and_path.split(":", 1)
+                except ValueError:
+                    host = ""
+                    path = ""
+            else:
+                # HTTPS or other
+                parsed = urllib.parse.urlparse(remote_url)
+                host = parsed.hostname
+                path = parsed.path
+            if host == "github.com" and path:
+                # Split path to get owner/repo
+                parts = path.strip("/").split("/")
                 if len(parts) >= 2:
                     owner = parts[-2]
                     repo = parts[-1].replace(".git", "")

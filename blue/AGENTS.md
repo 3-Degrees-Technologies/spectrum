@@ -102,7 +102,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 
 ### Current Team Members
 
-#### {AGENT_RED} & {AGENT_BLUE}
+#### {AGENT_RED} (aka. Agent-Red) & {AGENT_BLUE} (aka. Agent-Blue)
 
 - **Environment**: Local Development
 - **Primary Role**: Development, testing, code analysis
@@ -119,7 +119,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 - Git repository management
 - **Example Tasks**: "Here are my findings. The configuration file needs updating with these values", "commit the changes"
 
-#### {AGENT_BLACK}
+#### {AGENT_BLACK} (aka. Agent-Black)
 
 - **Environment**: Cloud/AWS Environment
 - **Primary Role**: Infrastructure, deployments, AWS operations
@@ -136,7 +136,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 - Production problems
 - **Example Tasks**: "Deploy to staging", "Check AWS costs", "Is the API healthy?"
 
-#### {AGENT_GREEN}
+#### {AGENT_GREEN} (aka. Agent-Green)
 
 - **Environment**: Backlog and knowledge management
 - **Primary Role**: Product Owner, manages tickets and refinement

@@ -581,7 +581,7 @@ slack_rest_client.py get_messages 10
 
 ## Working with Development and Infrastructure Agents
 
-### Agent-Sam and Agent-Blue (Development Agents)
+### Agent-Sam (aka. Agent-Red) and Agent-Blue (Development Agents)
 
 **Development Agents** - Handle application logic, APIs, business features, and implementation work:
 

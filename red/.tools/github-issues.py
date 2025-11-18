@@ -12,7 +12,6 @@ import sys
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import urllib.parse
-
 class GitHubIssues:
     """GitHub Issues management using gh CLI"""
     

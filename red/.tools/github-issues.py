@@ -92,9 +92,13 @@ class GitHubIssues:
                     path = ""
             else:
                 # HTTPS or other
-                parsed = urllib.parse.urlparse(remote_url)
-                host = parsed.hostname
-                path = parsed.path
+                try:
+                    parsed = urllib.parse.urlparse(remote_url)
+                    host = parsed.hostname if parsed.hostname is not None else ""
+                    path = parsed.path if parsed.path is not None else ""
+                except Exception:
+                    host = ""
+                    path = ""
             if host == "github.com" and path:
                 # Split path to get owner/repo
                 parts = path.strip("/").split("/")

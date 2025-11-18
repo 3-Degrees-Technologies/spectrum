@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-
+from urllib.parse import urlparse
 class GitHubIssues:
     """GitHub Issues management using gh CLI"""
     
@@ -80,16 +80,26 @@ class GitHubIssues:
             remote_url = result.stdout.strip()
             
             # Parse GitHub URL (supports both HTTPS and SSH)
-            if "github.com" in remote_url:
+            ssh_prefix = "git@github.com:"
+            if remote_url.startswith(ssh_prefix):
                 # SSH: git@github.com:owner/repo.git
-                # HTTPS: https://github.com/owner/repo.git
-                parts = remote_url.replace(":", "/").replace("git@", "").split("/")
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1].replace(".git", "")
+                parts = remote_url[len(ssh_prefix):].split("/")
+                if len(parts) == 2:
+                    owner = parts[0]
+                    repo = parts[1].replace(".git", "")
                     if self.debug:
                         print(f"🔍 Detected repo: {owner}/{repo}")
                     return owner, repo
+            else:
+                parsed = urlparse(remote_url)
+                if parsed.scheme in {"https", "http"} and parsed.hostname == "github.com":
+                    # HTTPS: https://github.com/owner/repo.git
+                    parts = parsed.path.strip("/").split("/")
+                    if len(parts) == 2:
+                        owner, repo = parts[0], parts[1].replace(".git", "")
+                        if self.debug:
+                            print(f"🔍 Detected repo: {owner}/{repo}")
+                        return owner, repo
         except subprocess.CalledProcessError:
             pass
         

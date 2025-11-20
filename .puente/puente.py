@@ -24,6 +24,39 @@ from aiohttp.web import Request, Response, json_response
 # Logging will be configured later when config is loaded
 logger = logging.getLogger(__name__)
 
+def convert_literal_newlines(text: str) -> str:
+    """
+    Convert literal "\\n" text sequences (two characters: backslash + 'n') into actual newline characters.
+    This handles cases where GPT models output the literal text "\\n" to indicate a line break.
+    
+    Protects content within backticks (code blocks) from conversion to preserve technical content.
+    
+    Example: "Hello\\nWorld" -> "Hello\nWorld"
+    Example: "`code with \\n literal`" -> "`code with \\n literal`" (unchanged)
+    """
+    import re
+    
+    # Store code blocks (both single backticks and triple backticks) to protect them
+    code_blocks = []
+    def store_code_block(match):
+        code_blocks.append(match.group(0))
+        return f"__CODE_BLOCK_PLACEHOLDER_{len(code_blocks)-1}__"
+    
+    # First, protect triple backtick code blocks
+    text = re.sub(r'```[\s\S]*?```', store_code_block, text)
+    
+    # Then, protect single backtick code spans
+    text = re.sub(r'`[^`]*?`', store_code_block, text)
+    
+    # Now safe to convert \\n to newlines outside of code blocks
+    text = text.replace('\\n', '\n')
+    
+    # Restore code blocks
+    for i, code_block in enumerate(code_blocks):
+        text = text.replace(f"__CODE_BLOCK_PLACEHOLDER_{i}__", code_block)
+    
+    return text
+
 def convert_markdown_to_slack(text: str) -> str:
     """
     Convert markdown formatting to Slack formatting
@@ -1428,17 +1461,17 @@ class SlackDaemon:
                 if not channel:
                     raise ValueError("No channel specified and no default channel configured")
                 
-                # Replace @agent-name mentions with proper Slack user IDs
+                # Convert literal "\n" sequences FIRST, before any other processing
+                # This protects code blocks from unwanted conversion and happens before
+                # replace_agent_mentions to avoid issues with agent names
                 original_text = text
-                text = replace_agent_mentions(text, self.agent_configs)
+                text = convert_literal_newlines(text)
                 
-                # Convert literal "\n" text sequences (two characters: backslash + 'n') into actual newline characters.
-                # This handles cases where GPT models output the literal text "\n" to indicate a line break,
-                # rather than producing an actual newline character. For example: "Hello\nWorld" -> "Hello[newline]World"
-                text = text.replace('\\n', '\n')
+                # Replace @agent-name mentions with proper Slack user IDs
+                text = replace_agent_mentions(text, self.agent_configs)
 
                 if text != original_text:
-                    logger.info(f"Replaced mentions in message: {original_text[:50]}... -> {text[:50]}...")
+                    logger.info(f"Processed message text: {original_text[:50]}... -> {text[:50]}...")
                 
                 # Convert markdown formatting to Slack formatting
                 markdown_converted_text = text

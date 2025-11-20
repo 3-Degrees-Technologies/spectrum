@@ -37,7 +37,7 @@ Recommended setup path:
 - Run `spectrum init`
 - Update `.spectrum/tokens.env` with your preferences (tokens from Slack CLI and Linear). You need to configure the bots to Slack for them to communicate with each other.
 - Run `spectrum start`
-- You have to think agent folders as their workspace. You probably want to create a src/git folder having all their git-repositories under developer agent folders (e.g. `red` and `blue`) and add their git-repositories there (e.g. with `git init` so that you'll have `/blue/git/MyProject/.git`)
+- Think of agent folders as their workspaces. You probably want to create a git folder within developer agent folders (e.g., `red` and `blue`) and add git repositories there (e.g., with `git init` so you'll have `red/git/MyProject/.git`).
 - Add remote to GitHub `git remote add origin https://github.com/...` and create a `dev` branch (`git checkout -b dev`) and do pull/push
 - Open agents in different command windows: `./agent green`, `./agent red`, `./agent blue`
 

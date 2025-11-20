@@ -70,10 +70,13 @@ class SaberCSV:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     
     def _escape_csv_field(self, value: str) -> str:
-        """Escape CSV field according to RFC 4180"""
+        """
+        Escape double quote characters in a CSV field by doubling them.
+        This method does not add surrounding quotes or handle commas/newlines.
+        Quoting is handled by the csv.QUOTE_ALL parameter in _write_tickets().
+        """
         if not value:
             return ""
-        # Always quote to handle commas, quotes, and newlines
         return value.replace('"', '""')
     
     def _unescape_csv_field(self, value: str) -> str:

@@ -80,34 +80,28 @@ class GitHubIssues:
             remote_url = result.stdout.strip()
             
             # Parse GitHub URL (supports both HTTPS and SSH)
-            # Parse for SSH ("git@github.com:owner/repo.git") or HTTPS ("https://github.com/owner/repo.git")
-            host = ""
-            if remote_url.startswith("git@"):
-                # SSH format: git@github.com:owner/repo.git
-                try:
-                    host_and_path = remote_url.split("git@", 1)[1]
-                    host, path = host_and_path.split(":", 1)
-                except ValueError:
-                    host = ""
-                    path = ""
-            else:
-                # HTTPS or other
-                try:
-                    parsed = urllib.parse.urlparse(remote_url)
-                    host = parsed.hostname if parsed.hostname is not None else ""
-                    path = parsed.path if parsed.path is not None else ""
-                except Exception:
-                    host = ""
-                    path = ""
-            if host == "github.com" and path:
-                # Split path to get owner/repo
-                parts = path.strip("/").split("/")
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1].replace(".git", "")
+            ssh_prefix = "git@github.com:"
+            if remote_url.startswith(ssh_prefix):
+                # SSH: git@github.com:owner/repo.git
+                repo_path = remote_url[len(ssh_prefix):]
+                if repo_path.endswith(".git"):
+                    repo_path = repo_path[:-4]
+                parts = repo_path.split("/")
+                if len(parts) == 2:
+                    owner, repo = parts
                     if self.debug:
                         print(f"🔍 Detected repo: {owner}/{repo}")
                     return owner, repo
+            else:
+                parsed = urllib.parse.urlparse(remote_url)
+                if parsed.scheme in {"https", "http"} and parsed.hostname == "github.com":
+                    # HTTPS: https://github.com/owner/repo.git
+                    parts = parsed.path.strip("/").split("/")
+                    if len(parts) == 2:
+                        owner, repo = parts[0], parts[1].replace(".git", "")
+                        if self.debug:
+                            print(f"🔍 Detected repo: {owner}/{repo}")
+                        return owner, repo
         except subprocess.CalledProcessError:
             pass
         

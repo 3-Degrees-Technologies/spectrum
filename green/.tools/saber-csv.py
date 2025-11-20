@@ -71,9 +71,8 @@ class SaberCSV:
     
     def _escape_csv_field(self, value: str) -> str:
         """
-        Escape double quote characters in a CSV field by doubling them.
-        This method does not add surrounding quotes or handle commas/newlines.
-        Quoting is handled by the csv.QUOTE_ALL parameter in _write_tickets().
+        Escape double quote characters by doubling them per RFC 4180.
+        Actual field quoting (for commas/newlines) is handled by csv.QUOTE_ALL in _write_tickets().
         """
         if not value:
             return ""

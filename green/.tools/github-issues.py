@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-from urllib.parse import urlparse
+import urllib.parse
 
 
 class GitHubIssues:
@@ -93,7 +93,7 @@ class GitHubIssues:
                         print(f"🔍 Detected repo: {owner}/{repo}")
                     return owner, repo
             else:
-                parsed = urlparse(remote_url)
+                parsed = urllib.parse.urlparse(remote_url)
                 if parsed.scheme in {"https", "http"} and parsed.hostname == "github.com":
                     # HTTPS: https://github.com/owner/repo.git
                     parts = parsed.path.strip("/").split("/")

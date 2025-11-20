@@ -85,10 +85,12 @@ class GitHubIssues:
             ssh_prefix = "git@github.com:"
             if remote_url.startswith(ssh_prefix):
                 # SSH: git@github.com:owner/repo.git
-                parts = remote_url[len(ssh_prefix):].split("/")
+                repo_path = remote_url[len(ssh_prefix):]
+                if repo_path.endswith(".git"):
+                    repo_path = repo_path[:-4]
+                parts = repo_path.split("/")
                 if len(parts) == 2:
-                    owner = parts[0]
-                    repo = parts[1].replace(".git", "")
+                    owner, repo = parts
                     if self.debug:
                         print(f"🔍 Detected repo: {owner}/{repo}")
                     return owner, repo

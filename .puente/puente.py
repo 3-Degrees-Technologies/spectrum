@@ -1431,7 +1431,9 @@ class SlackDaemon:
                 original_text = text
                 text = replace_agent_mentions(text, self.agent_configs)
                 
-                # Convert explicit '\\n' sequences (often produced by GPT models to indicate line breaks) into actual newline characters for proper Slack formatting
+                # Convert literal "\n" text sequences (two characters: backslash + 'n') into actual newline characters.
+                # This handles cases where GPT models output the literal text "\n" to indicate a line break,
+                # rather than producing an actual newline character. For example: "Hello\nWorld" -> "Hello[newline]World"
                 text = text.replace('\\n', '\n')
 
                 if text != original_text:

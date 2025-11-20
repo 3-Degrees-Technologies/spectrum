@@ -101,7 +101,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 
 ### Current Team Members
 
-#### {AGENT_RED} & {AGENT_BLUE}
+#### {AGENT_RED} (aka. Agent-Red) & {AGENT_BLUE} (aka. Agent-Blue)
 
 - **Environment**: Local Development
 - **Primary Role**: Development, testing, code analysis
@@ -118,7 +118,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 - Git repository management
 - **Example Tasks**: "Here are my findings. The configuration file needs updating with these values", "commit the changes"
 
-#### {AGENT_BLACK}
+#### {AGENT_BLACK} (aka. Agent-Black)
 
 - **Environment**: Cloud/AWS Environment
 - **Primary Role**: Infrastructure, deployments, AWS operations
@@ -135,7 +135,7 @@ The executable framework provides **direct prompting** - no need to memorize com
 - Production problems
 - **Example Tasks**: "Deploy to staging", "Check AWS costs", "Is the API healthy?"
 
-#### {AGENT_GREEN}
+#### {AGENT_GREEN} (aka. Agent-Green)
 
 - **Environment**: Backlog and knowledge management
 - **Primary Role**: Product Owner, manages tickets and refinement
@@ -163,6 +163,40 @@ The executable framework provides **direct prompting** - no need to memorize com
 # Send a message to the team
 .tools/slack_rest_client.py send_message "Implementation complete, ready for review"
 ```
+
+### Spectrum Utility Tools
+
+**Git Repository Helper:**
+
+```bash
+.tools/git_repo_helper.py --diagnostics    # Show git repo information
+.tools/git_repo_helper.py --git-root       # Get git root path
+.tools/git_repo_helper.py --working-path   # Get working directory
+```
+
+**Purpose**: Find git root when working from agent subfolders. Useful for git operations when your current directory is `red/.tools/` or deeper.
+
+**GitHub Issues Management** (if needed):
+
+```bash
+.tools/github-issues.py create "Title" --body "Description" --labels "bug"
+.tools/github-issues.py list --state open
+.tools/github-issues.py get #123
+```
+
+**Requirements**: GitHub CLI (`gh`) must be installed and authenticated.
+
+**Purpose**: Manage GitHub Issues directly from CLI. Useful for bug reports or feature requests in GitHub-based projects.
+
+**Local Task Tracking** (if needed):
+
+```bash
+.tools/saber-csv.py create "Local task" --description "Details"
+.tools/saber-csv.py list --state open
+.tools/saber-csv.py status TKT-1 "In Progress"
+```
+
+**Purpose**: Offline task tracking using CSV files. Useful for personal task lists or when Linear is unavailable.
 
 ### Direct Mentions
 

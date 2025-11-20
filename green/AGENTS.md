@@ -377,6 +377,40 @@ In this list, PRO replaces whatever short name Linear has given your project.  I
 - `saber.py label PRO-123 add "bug,urgent"` - Add labels
 - `saber.py labels` - List all available labels
 
+**Alternative Ticket Backends:**
+
+When Linear is unavailable or for offline work, use these alternative backends:
+
+- `ticketflow` - **Auto-detection wrapper** (RECOMMENDED)
+  - Automatically detects LINEAR_API_KEY configuration
+  - Routes to saber.py (Linear) if configured
+  - Falls back to saber-csv.py (CSV) if Linear unavailable
+  - Same API as saber.py - drop-in replacement
+  - Usage: `./ticketflow create "Title" --description "..."`
+
+- `saber-csv.py` - **Offline CSV backend**
+  - Works completely offline, no external dependencies
+  - Stores tickets in `.spectrum/tickets.csv`
+  - Full CRUD operations, labels, assignees, priorities
+  - RFC 4180 compliant CSV format (Excel-compatible)
+  - Usage: `./saber-csv.py create "Title" --description "..."`
+  - Commands: create, get, status, comment, assign, list, add-label, remove-label
+
+- `github-issues.py` - **GitHub Issues integration**
+  - Manage GitHub Issues via CLI
+  - Requires: `gh` CLI installed and authenticated
+  - Auto-detects owner/repo from git remote
+  - Usage: `./github-issues.py create "Title" --body "..."`
+  - Commands: create, get, status, body, comment, assign, list, add-label, remove-label
+
+**Git Repository Helper:**
+
+- `git_repo_helper.py` - **Git utilities**
+  - Find git root from anywhere in directory tree
+  - Support for git repos in agent folders or subfolders
+  - Usage: `./git_repo_helper.py --diagnostics`
+  - Useful when working from agent subfolders
+
 **Bash Automation Scripts:**
 
 - `./assign_ticket PRO-123 Agent-Name` - **ENHANCED**: Full assignment workflow with dependency checking, quality gates, visualization analysis, and registry updates
@@ -547,7 +581,7 @@ slack_rest_client.py get_messages 10
 
 ## Working with Development and Infrastructure Agents
 
-### Agent-Sam and Agent-Blue (Development Agents)
+### Agent-Sam (aka. Agent-Red) and Agent-Blue (Development Agents)
 
 **Development Agents** - Handle application logic, APIs, business features, and implementation work:
 

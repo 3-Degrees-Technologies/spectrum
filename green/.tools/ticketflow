@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Auto-detection wrapper for ticket management
+# Chooses between saber (Linear) and saber-csv (CSV) based on configuration
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${PWD}/.env"
+
+# Check if Linear is configured
+is_linear_configured() {
+    # 1. Check environment variable
+    if [ -n "$LINEAR_API_KEY" ] && \
+       [ "$LINEAR_API_KEY" != "your-api-key-here" ] && \
+       [ "$LINEAR_API_KEY" != "lin_api_xxx" ]; then
+        return 0
+    fi
+    
+    # 2. Check .env file
+    if [ -f "$ENV_FILE" ]; then
+        if grep -q "^LINEAR_API_KEY=" "$ENV_FILE"; then
+            KEY=$(grep "^LINEAR_API_KEY=" "$ENV_FILE" | cut -d'=' -f2-)
+            # Remove quotes if present
+            KEY=$(echo "$KEY" | sed 's/^["'\'']\(.*\)["'\'']$/\1/')
+            if [ -n "$KEY" ] && [ ${#KEY} -gt 10 ]; then
+                return 0
+            fi
+        fi
+    fi
+    
+    return 1  # Use saber-csv by default
+}
+
+# Detect which backend to use
+if is_linear_configured; then
+    echo "🔍 Linear configured, using saber" >&2
+    exec /usr/bin/env python3 "$SCRIPT_DIR/saber.py" "$@"
+else
+    echo "📝 No Linear configuration, using saber-csv (CSV)" >&2
+    exec /usr/bin/env python3 "$SCRIPT_DIR/saber-csv.py" "$@"
+fi

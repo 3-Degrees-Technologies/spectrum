@@ -32,8 +32,8 @@ is_linear_configured() {
 # Detect which backend to use
 if is_linear_configured; then
     echo "🔍 Linear configured, using saber" >&2
-    exec python3 "$SCRIPT_DIR/saber.py" "$@"
+    exec /usr/bin/env python3 "$SCRIPT_DIR/saber.py" "$@"
 else
     echo "📝 No Linear configuration, using saber-csv (CSV)" >&2
-    exec python3 "$SCRIPT_DIR/saber-csv.py" "$@"
+    exec /usr/bin/env python3 "$SCRIPT_DIR/saber-csv.py" "$@"
 fi

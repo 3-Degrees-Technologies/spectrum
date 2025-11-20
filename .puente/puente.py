@@ -215,7 +215,8 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
                     if after_pattern_pos < len(text_lower):
                         next_char = text_lower[after_pattern_pos]
                         # If followed by alphanumeric/hyphen, might be part of another name
-                        if pattern.startswith('@') and (next_char.isalnum() or next_char == '-'):
+                        # Apply this check to ALL patterns, not just those starting with '@'
+                        if next_char.isalnum() or next_char == '-':
                             logger.info(f"🔍 FILTERING: False positive for pattern '{pattern}', next char: '{next_char}'")
                             continue  # Skip this pattern
                     message_matched = True

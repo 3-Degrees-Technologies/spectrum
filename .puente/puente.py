@@ -24,6 +24,39 @@ from aiohttp.web import Request, Response, json_response
 # Logging will be configured later when config is loaded
 logger = logging.getLogger(__name__)
 
+def convert_literal_newlines(text: str) -> str:
+    """
+    Convert literal "\\n" text sequences (two characters: backslash + 'n') into actual newline characters.
+    This handles cases where GPT models output the literal text "\\n" to indicate a line break.
+    
+    Protects content within backticks (code blocks) from conversion to preserve technical content.
+    
+    Example: "Hello\\nWorld" -> "Hello\nWorld"
+    Example: "`code with \\n literal`" -> "`code with \\n literal`" (unchanged)
+    """
+    import re
+    
+    # Store code blocks (both single backticks and triple backticks) to protect them
+    code_blocks = []
+    def store_code_block(match):
+        code_blocks.append(match.group(0))
+        return f"__CODE_BLOCK_PLACEHOLDER_{len(code_blocks)-1}__"
+    
+    # First, protect triple backtick code blocks
+    text = re.sub(r'```[\s\S]*?```', store_code_block, text)
+    
+    # Then, protect single backtick code spans
+    text = re.sub(r'`[^`]*?`', store_code_block, text)
+    
+    # Now safe to convert \\n to newlines outside of code blocks
+    text = text.replace('\\n', '\n')
+    
+    # Restore code blocks
+    for i, code_block in enumerate(code_blocks):
+        text = text.replace(f"__CODE_BLOCK_PLACEHOLDER_{i}__", code_block)
+    
+    return text
+
 def convert_markdown_to_slack(text: str) -> str:
     """
     Convert markdown formatting to Slack formatting
@@ -103,11 +136,20 @@ def replace_agent_mentions(text: str, agent_configs: Dict) -> str:
     
     return text
 
-def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_reacted=True, bot_user_id=None):
-    """Filter messages for relevance to a specific agent (color or name)"""
+def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_reacted=True, bot_user_id=None, friendly_agent_name=None, config_bot_name=None):
+    """
+    Filter messages for relevance to a specific agent (color or name)
+    Implements 6-pattern detection:
+      a) Friendly agent name with "Agent-" prefix (e.g., "Agent-Knowledge")
+      b) Friendly agent name without prefix (e.g., "Knowledge")
+      c) Slack bot user ID (e.g., <@U123456>)
+      d) Color-based agent name with "Agent-" prefix (e.g., "Agent-green")
+      e) Color mention (e.g., "@green")
+      f) Config bot name (e.g., "agent-abc")
+    """
     relevant = []
     
-    logger.info(f"🔍 FILTERING: Checking {len(messages)} messages for agent '{agent_identifier}' (bot_user_id: {bot_user_id})")
+    logger.info(f"🔍 FILTERING: Checking {len(messages)} messages for agent '{agent_identifier}' (bot_user_id: {bot_user_id}, friendly_name: {friendly_agent_name})")
     
     # Keywords that indicate team-wide relevance
     team_keywords = [
@@ -117,28 +159,40 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
         "maintenance", "daemon restart"
     ]
     
-    # Look for proper Slack user ID mentions: <@U096VLDAHJ5>
-    user_id_pattern = f"<@{bot_user_id}>" if bot_user_id else None
+    # Build detection patterns (case-insensitive)
+    detection_patterns = []
     
-    # Legacy: Support old text-based patterns for backwards compatibility
-    # Make patterns more specific to avoid false matches
-    agent_patterns = [
-        f"@{agent_identifier.lower()}:",    # @red: or @agent-sam:
-        f"@{agent_identifier.lower()} ",    # @red or @agent-sam followed by space
-        f"[{agent_identifier.lower()}]",    # [red] or [agent-sam]
-        f"{agent_identifier.lower()}:"      # red: or agent-sam:
-    ]
+    # Pattern a) & b) Friendly agent name (with and without "Agent-" prefix)
+    if friendly_agent_name:
+        detection_patterns.append(f"agent-{friendly_agent_name.lower()}")  # "Agent-Knowledge"
+        detection_patterns.append(f"@agent-{friendly_agent_name.lower()}")
+        detection_patterns.append(friendly_agent_name.lower())  # "Knowledge"
+        detection_patterns.append(f"@{friendly_agent_name.lower()}")
     
-    # Add more flexible patterns for "Agent Color" format
+    # Pattern d) & e) Color-based agent name (with and without "Agent-" prefix)
+    detection_patterns.append(f"agent-{agent_identifier.lower()}")  # "Agent-red"
+    detection_patterns.append(f"@agent-{agent_identifier.lower()}")
+    detection_patterns.append(f"@{agent_identifier.lower()}")  # "@red"
+    
+    # Pattern f) Config bot name
+    if config_bot_name:
+        detection_patterns.append(config_bot_name.lower())
+        detection_patterns.append(f"@{config_bot_name.lower()}")
+    
+    # Additional flexible patterns for color agents
     if agent_identifier.lower() in ['red', 'blue', 'green', 'black']:
-        agent_patterns.extend([
-            f"@agent {agent_identifier.lower()}",  # @agent red
-            f"@agent-{agent_identifier.lower()}",  # @agent-red
-            f"@agent{agent_identifier.lower()}",   # @agentred
+        detection_patterns.extend([
+            f"@agent {agent_identifier.lower()}",  # "@agent red"
+            f"@agent{agent_identifier.lower()}",   # "@agentred"
+            f"[{agent_identifier.lower()}]",       # "[red]"
+            f"{agent_identifier.lower()}:"         # "red:"
         ])
     
-    logger.info(f"🔍 FILTERING: Looking for patterns: {agent_patterns}")
-    logger.info(f"🔍 FILTERING: Looking for user_id_pattern: {user_id_pattern}")
+    logger.info(f"🔍 FILTERING: Detection patterns: {detection_patterns}")
+    
+    # Pattern c) Slack user ID mention (preferred)
+    user_id_pattern = f"<@{bot_user_id}>" if bot_user_id else None
+    logger.info(f"🔍 FILTERING: User ID pattern: {user_id_pattern}")
     
     for msg in messages:
         text = msg.get("text", "")
@@ -146,6 +200,11 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
         user_id = msg.get("user_id", "")
         
         logger.info(f"🔍 FILTERING: Checking message: '{text}' from user {user_id}")
+        
+        # Skip agent's own messages
+        if bot_user_id and user_id == bot_user_id:
+            logger.info(f"🔍 FILTERING: ❌ Skipping own message")
+            continue
         
         # Check if this specific agent has already reacted to this message
         if exclude_reacted and bot_user_id:
@@ -159,7 +218,7 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
                     break
             
             if agent_reacted:
-                logger.info(f"🔍 FILTERING: Agent already reacted to message, skipping")
+                logger.info(f"🔍 FILTERING: ❌ Agent already reacted to message, skipping")
                 continue
         
         # Check for team-wide alerts first
@@ -169,42 +228,31 @@ def filter_relevant_messages_for_agent(messages, agent_identifier, exclude_react
             relevant.append(msg)
             continue
             
-        # Check for proper Slack user ID mentions first (preferred)
+        # Check for proper Slack user ID mentions first (Pattern c - preferred)
         user_id_match = user_id_pattern and user_id_pattern in text
         if user_id_match:
             logger.info(f"🔍 FILTERING: ✅ User ID match: {text[:50]}...")
             relevant.append(msg)
             continue
             
-        # Skip agent's own messages - don't notify on self-sent messages
-        own_message = msg.get("user_id") == bot_user_id
-        if own_message:
-            logger.info(f"🔍 FILTERING: ❌ Skipping own message: {text[:50]}...")
-            continue
-            
-        # Fallback: Check for legacy text-based patterns (more specific matching)
+        # Check all text-based detection patterns
         message_matched = False
-        for pattern in agent_patterns:
+        for pattern in detection_patterns:
             if pattern in text_lower:
                 logger.info(f"🔍 FILTERING: ✅ Pattern match '{pattern}': {text[:50]}...")
-                # Additional validation: make sure this isn't part of another agent's name
-                if pattern.startswith('@'):
-                    # For @agent patterns, ensure it's not part of a longer agent name
-                    pattern_pos = text_lower.find(pattern)
-                    if pattern_pos >= 0:
-                        # Check what comes after the pattern
-                        after_pattern_pos = pattern_pos + len(pattern)
-                        if after_pattern_pos < len(text_lower):
-                            next_char = text_lower[after_pattern_pos]
-                            # If followed by a letter/digit, it might be part of another agent name
-                            if next_char.isalnum() or next_char == '-':
-                                logger.info(f"🔍 FILTERING: False positive for pattern '{pattern}', next char: '{next_char}'")
-                                continue  # Skip this pattern, might be false positive
-                        message_matched = True
-                        break
-                else:
-                    message_matched = True
-                    break
+                # Validate that this isn't part of another word/agent name
+                pattern_pos = text_lower.find(pattern)
+                if pattern_pos >= 0:
+                    # Check what comes after the pattern
+                    after_pattern_pos = pattern_pos + len(pattern)
+                    if after_pattern_pos < len(text_lower):
+                        next_char = text_lower[after_pattern_pos]
+                        # If followed by alphanumeric/hyphen, might be part of another name
+                        if next_char.isalnum() or next_char == '-':
+                            logger.info(f"🔍 FILTERING: False positive for pattern '{pattern}', next char: '{next_char}'")
+                            continue  # Skip this pattern
+                message_matched = True
+                break
         
         if message_matched:
             relevant.append(msg)
@@ -1412,12 +1460,17 @@ class SlackDaemon:
                 if not channel:
                     raise ValueError("No channel specified and no default channel configured")
                 
-                # Replace @agent-name mentions with proper Slack user IDs
+                # Convert literal "\n" sequences FIRST, before any other processing
+                # This protects code blocks from unwanted conversion and happens before
+                # replace_agent_mentions to avoid issues with agent names
                 original_text = text
-                text = replace_agent_mentions(text, self.agent_configs)
+                text = convert_literal_newlines(text)
                 
+                # Replace @agent-name mentions with proper Slack user IDs
+                text = replace_agent_mentions(text, self.agent_configs)
+
                 if text != original_text:
-                    logger.info(f"Replaced mentions in message: {original_text[:50]}... -> {text[:50]}...")
+                    logger.info(f"Processed message text: {original_text[:50]}... -> {text[:50]}...")
                 
                 # Convert markdown formatting to Slack formatting
                 markdown_converted_text = text

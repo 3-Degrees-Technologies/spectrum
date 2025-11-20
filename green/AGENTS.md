@@ -9,7 +9,7 @@
 
 ### 1. Project
 
-We are building Centro, a payment orchestration platform. We provide a single API to interface with the major cross-border payment organisations.
+We build world-class FinTech platform products and components, designed for reliability, quality, and easy maintenance.
 
 ### 2. Epic & Ticket Management
 
@@ -377,6 +377,40 @@ In this list, PRO replaces whatever short name Linear has given your project.  I
 - `saber.py label PRO-123 add "bug,urgent"` - Add labels
 - `saber.py labels` - List all available labels
 
+**Alternative Ticket Backends:**
+
+When Linear is unavailable or for offline work, use these alternative backends:
+
+- `ticketflow` - **Auto-detection wrapper** (RECOMMENDED)
+  - Automatically detects LINEAR_API_KEY configuration
+  - Routes to saber.py (Linear) if configured
+  - Falls back to saber-csv.py (CSV) if Linear unavailable
+  - Same API as saber.py - drop-in replacement
+  - Usage: `./ticketflow create "Title" --description "..."`
+
+- `saber-csv.py` - **Offline CSV backend**
+  - Works completely offline, no external dependencies
+  - Stores tickets in `.spectrum/tickets.csv`
+  - Full CRUD operations, labels, assignees, priorities
+  - RFC 4180 compliant CSV format (Excel-compatible)
+  - Usage: `./saber-csv.py create "Title" --description "..."`
+  - Commands: create, get, status, comment, assign, list, add-label, remove-label
+
+- `github-issues.py` - **GitHub Issues integration**
+  - Manage GitHub Issues via CLI
+  - Requires: `gh` CLI installed and authenticated
+  - Auto-detects owner/repo from git remote
+  - Usage: `./github-issues.py create "Title" --body "..."`
+  - Commands: create, get, status, body, comment, assign, list, add-label, remove-label
+
+**Git Repository Helper:**
+
+- `git_repo_helper.py` - **Git utilities**
+  - Find git root from anywhere in directory tree
+  - Support for git repos in agent folders or subfolders
+  - Usage: `./git_repo_helper.py --diagnostics`
+  - Useful when working from agent subfolders
+
 **Bash Automation Scripts:**
 
 - `./assign_ticket PRO-123 Agent-Name` - **ENHANCED**: Full assignment workflow with dependency checking, quality gates, visualization analysis, and registry updates
@@ -547,7 +581,7 @@ slack_rest_client.py get_messages 10
 
 ## Working with Development and Infrastructure Agents
 
-### Agent-Sam and Agent-Blue (Development Agents)
+### Agent-Sam (aka. Agent-Red) and Agent-Blue (Development Agents)
 
 **Development Agents** - Handle application logic, APIs, business features, and implementation work:
 
@@ -636,3 +670,26 @@ Should I refine Background Services to use 'android service', 'foreground servic
 #### Working with Errors
 
 If you encounter a process error, don't abandon the process and work manually, fix the process
+
+
+## If a Ticket Is Assigned to You
+
+**Ticket Labels**:
+
+- **research**: Investigate and gather information (no coding)
+- **architecture**: Create specifications or design plans (no coding)  
+- **backend**: Write code, tests, and documentation (coding required)
+
+**You don't do backend or architecture tickets.**
+
+**MANDATORY Reading for 'research' tickets**: 
+
+- Before processing further any of your task, you have to do 3 things: Find if there exists official resource of the topic having documentation (for specs and test-cases) relevant to our integration and technologies, and find the official Wikipedia article about the topic, and search if there is already available an open source resource to help, for example a NuGet-package (with GitHub source repository). We don't want to reinvent a wheel, and we want to grasp complete but very focused view on the topic. If we decide to go for using ready-made open source resource, then we have to check the following things:
+  - It should supports the used framework (technology stack)
+  - It shouldn't introduce new dependencies to other components.
+  - It shouldn't have known high priority security, performance or memory-leak issues
+  - It should have at least 3 contributors and some stars/upvotes to display that it's well respected 
+  - It should have some development activity within 2 years (not dead)
+  - The license: Should be free and allow commercial use, like GPL-3.0 or Unlicense.
+- Then proceed with investigation or planning tasks.
+- When you think you have finished, please double check your work.

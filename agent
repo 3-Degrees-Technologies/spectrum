@@ -22,22 +22,43 @@ get_agent_name() {
 
 # Parse command
 if [[ $# -lt 1 ]]; then
-    echo "Usage: agent <color>"
+    echo "Usage: agent <color> [cli]"
     echo ""
     echo "Spectrum AI Agent Conventions:"
     echo "  green   → $(get_agent_name green) in ./green"
     echo "  red     → $(get_agent_name red) in ./red"
     echo "  blue    → $(get_agent_name blue) in ./blue"
-    echo "  blue    → $(get_agent_name black) in ./black"
+    echo "  magenta → $(get_agent_name magenta) in ./magenta"
+    echo "  black   → $(get_agent_name black) in ./black"
+    echo "  grey    → $(get_agent_name grey) in ./grey"
+    echo "  indigo  → $(get_agent_name indigo) on EC2 (remote)"
+    echo ""
+    echo "Optional cli overrides the per-agent default: opencode, claude, codex"
     exit 1
 fi
 
 AGENT_COLOR="$1"
 
+# Optional CLI override (second arg)
+CLI_OVERRIDE="$2"
+if [[ -n "$CLI_OVERRIDE" ]]; then
+    case "$CLI_OVERRIDE" in
+        opencode|claude|codex) ;;
+        *)
+            echo "❌ Unknown cli: $CLI_OVERRIDE"
+            echo "Available: opencode, claude, codex"
+            exit 1
+            ;;
+    esac
+fi
+
 # Handle scarlet alias
 if [[ "$AGENT_COLOR" == "scarlet" ]]; then
     AGENT_COLOR="red"
 fi
+
+# Default CLI; per-colour cases below may override (e.g. blue/magenta use Claude Code)
+CLI="opencode"
 
 # Convention-based directory mapping
 case "$AGENT_COLOR" in
@@ -57,10 +78,21 @@ case "$AGENT_COLOR" in
     "blue")
         AGENT_NAME="$(get_agent_name blue)"
         WORK_DIR="./blue"
+        CLI="claude"
         # Ensure blue directory exists
         if [[ ! -d "./blue" ]]; then
             echo "📁 Creating blue directory for $AGENT_NAME..."
             mkdir -p "./blue"
+        fi
+        ;;
+    "magenta")
+        AGENT_NAME="$(get_agent_name magenta)"
+        WORK_DIR="./magenta"
+        CLI="claude"
+        # Ensure magenta directory exists
+        if [[ ! -d "./magenta" ]]; then
+            echo "📁 Creating magenta directory for $AGENT_NAME..."
+            mkdir -p "./magenta"
         fi
         ;;
     "black")
@@ -72,20 +104,120 @@ case "$AGENT_COLOR" in
             mkdir -p "./black"
         fi
         ;;
+    "grey")
+        AGENT_NAME="$(get_agent_name grey)"
+        WORK_DIR="./grey"
+        # Ensure grey directory exists
+        if [[ ! -d "./grey" ]]; then
+            echo "📁 Creating grey directory for $AGENT_NAME..."
+            mkdir -p "./grey"
+        fi
+        ;;
+    "indigo")
+        AGENT_NAME="$(get_agent_name indigo)"
+        REMOTE_AGENT=true
+        REMOTE_INSTANCE_ID="i-021affba2a74f366e"
+        REMOTE_SSH_KEY="$HOME/.ssh/centro-dev-agent-host.pem"
+        REMOTE_USER="ubuntu"
+        REMOTE_WORK_DIR="/home/ubuntu/Workspace/3Degrees/Centro/indigo"
+        REMOTE_REGION="eu-west-1"
+        ;;
     *)
         echo "❌ Unknown agent: $AGENT_COLOR"
-        echo "Available: green, red, blue, black"
+        echo "Available: green, red, blue, magenta, black, grey, indigo"
         exit 1
         ;;
 esac
 
-echo "🤖 Starting OpenCode session with $AGENT_NAME..."
+# Apply CLI override if provided
+if [[ -n "$CLI_OVERRIDE" ]]; then
+    CLI="$CLI_OVERRIDE"
+fi
+
+echo "🤖 Starting $CLI session with $AGENT_NAME..."
+
+# Handle remote agents (SSH to EC2)
+if [[ "${REMOTE_AGENT:-false}" == "true" ]]; then
+    echo "🌐 Remote agent — looking up EC2 instance $REMOTE_INSTANCE_ID..."
+
+    # Get current public IP from AWS
+    REMOTE_IP=$(aws ec2 describe-instances \
+        --instance-ids "$REMOTE_INSTANCE_ID" \
+        --query 'Reservations[0].Instances[0].PublicIpAddress' \
+        --output text \
+        --region "$REMOTE_REGION" \
+        --profile dev 2>&1)
+
+    if [[ -z "$REMOTE_IP" || "$REMOTE_IP" == "None" || "$REMOTE_IP" == null ]]; then
+        echo "❌ Could not get public IP for instance $REMOTE_INSTANCE_ID"
+        echo "   Is the instance running? Try: aws ec2 start-instances --instance-ids $REMOTE_INSTANCE_ID --region $REMOTE_REGION"
+        exit 1
+    fi
+
+    echo "📡 Instance IP: $REMOTE_IP"
+    echo "📁 Remote directory: $REMOTE_WORK_DIR"
+
+    # Check SSH key exists
+    if [[ ! -f "$REMOTE_SSH_KEY" ]]; then
+        echo "❌ SSH key not found: $REMOTE_SSH_KEY"
+        exit 1
+    fi
+
+    # Restore Indigo's opencode.json (repo-level overrides system-level,
+    # and git operations reset the file since assume-unchanged is fragile)
+    if [[ "$CLI" == "opencode" ]]; then
+        echo "🔧 Ensuring remote opencode.json has correct MCP config..."
+        INDIGO_CONFIG_SRC="$(dirname "$0")/.spectrum/indigo-opencode.json"
+        if [[ -f "$INDIGO_CONFIG_SRC" ]]; then
+            scp -q -i "$REMOTE_SSH_KEY" \
+                -o StrictHostKeyChecking=accept-new \
+                "$INDIGO_CONFIG_SRC" \
+                "${REMOTE_USER}@${REMOTE_IP}:${REMOTE_WORK_DIR}/opencode.json"
+            ssh -i "$REMOTE_SSH_KEY" \
+                -o StrictHostKeyChecking=accept-new \
+                -o ConnectTimeout=10 \
+                "${REMOTE_USER}@${REMOTE_IP}" \
+                "git -C ${REMOTE_WORK_DIR} update-index --assume-unchanged opencode.json 2>/dev/null || true"
+        else
+            echo "⚠️  Indigo config not found at $INDIGO_CONFIG_SRC — using existing remote config"
+        fi
+    fi
+
+    # SSH into the instance and start the chosen CLI
+    exec ssh -t -i "$REMOTE_SSH_KEY" \
+        -o StrictHostKeyChecking=accept-new \
+        -o ConnectTimeout=10 \
+        "${REMOTE_USER}@${REMOTE_IP}" \
+        "cd ${REMOTE_WORK_DIR} && export PATH=\"\$HOME/.opencode/bin:\$PATH\" && exec $CLI"
+fi
+
 echo "📁 Working directory: $WORK_DIR"
 
-# Check if opencode is available
-if ! command -v opencode >/dev/null 2>&1; then
-    echo "❌ OpenCode not found in PATH"
-    echo "   Please ensure OpenCode is installed and available in your PATH"
+# Start VPN for black agent
+if [[ "$AGENT_COLOR" == "black" ]]; then
+    VPN_CONFIG="$WORK_DIR/centro-dev-vpn-config.ovpn"
+
+    # Check if VPN is already running
+    if pgrep -f "centro-dev-vpn-config.ovpn" > /dev/null; then
+        echo "🔒 VPN already running"
+    elif [[ -f "$VPN_CONFIG" ]]; then
+        echo "🔒 Starting VPN connection..."
+        sudo openvpn --config "$VPN_CONFIG" --daemon --log /tmp/openvpn-centro.log
+        sleep 5
+        if pgrep -f "centro-dev-vpn-config.ovpn" > /dev/null; then
+            echo "✅ VPN connected"
+        else
+            echo "❌ VPN failed to start"
+        fi
+    else
+        echo "⚠️  VPN config not found: $VPN_CONFIG"
+    fi
+fi
+
+# Check if the chosen CLI is available
+if ! command -v "$CLI" >/dev/null 2>&1; then
+    echo "❌ $CLI not found in PATH"
+    echo "   Please ensure $CLI is installed and available in your PATH"
     exit 1
 fi
 
@@ -97,53 +229,19 @@ if [[ -d ".tools" ]]; then
     export PATH="$(pwd)/.tools:$PATH"
 fi
 
-# Set up automatic agent registration in the background
-setup_auto_registration() {
-    local color="$1"
-    
-    # Create a background script that waits for OpenCode to start, then registers
-    cat > /tmp/auto-register-${color}-$$.sh << 'EOF'
-#!/bin/bash
-AGENT_COLOR="$1"
-WORK_DIR="$2"
-
-# Wait for OpenCode to start and get a port (max 30 seconds)
-for i in {1..30}; do
-    sleep 1
-    
-    # Look for this process's OpenCode port
-    OPENCODE_PID=$PPID
-    PORT=$(netstat -tulnp 2>/dev/null | grep "$OPENCODE_PID/opencode" | awk '{print $4}' | cut -d: -f2 | head -1)
-    
-    if [[ -n "$PORT" ]]; then
-        
-        # Change to the agent directory to run the registration script
-        cd "$WORK_DIR"
-        
-        # Run the registration script if it exists
-        if [[ -f ".tools/agent-register.sh" ]]; then
-            .tools/agent-register.sh --color "$AGENT_COLOR" --port "$PORT" 2>/dev/null || true
-        fi
-        break
-    fi
-done
-
-# Clean up this script
-rm -f "/tmp/auto-register-${AGENT_COLOR}-$$.sh"
-EOF
-    
-    chmod +x "/tmp/auto-register-${color}-$$.sh"
-    
-    # Start the registration script in the background
-    "/tmp/auto-register-${color}-$$.sh" "$color" "$(pwd)" &
-}
-
-echo "🚀 Starting OpenCode in $(pwd)..."
-
-# Set up auto-registration before starting OpenCode
-if [[ -f ".tools/agent-register.sh" ]]; then
-    echo "🔗 Setting up automatic Slack notification registration..."
-    setup_auto_registration "$AGENT_COLOR"
+# Load SonarQube secrets if available
+if [[ -f "$HOME/.sonar_secrets" ]]; then
+    source "$HOME/.sonar_secrets"
+    echo "🔑 SonarQube secrets loaded"
 fi
 
-exec opencode
+# For red, green and blue, pass the agent colour to Claude Code as a startup argument
+if [[ "$CLI" == "claude" ]]; then
+    case "$AGENT_COLOR" in
+        red|green|blue)
+            exec claude "/color $AGENT_COLOR"
+            ;;
+    esac
+fi
+
+exec "$CLI"
